@@ -1,0 +1,40 @@
+# Dependências
+node_modules/
+.pnpm-store/
+
+# Build
+.next/
+out/
+build/
+dist/
+tsconfig.tsbuildinfo
+
+# Variáveis de ambiente — NUNCA commitar (contém senha do banco, chaves de API e APP_ENCRYPTION_KEY)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testes
+playwright-report/
+test-results/
+.smoke-*.png
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
+
+# Diversos
+*.tsbuildinfo
+next-env.d.ts
