@@ -4,20 +4,26 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { encrypt, createKeyPreview } from "@/lib/crypto";
-import { aiKeyRequestSchema } from "@/lib/ai/schemas";
 import { rateLimit } from "@/lib/rate-limit";
+import { AI_PROVIDERS, NVIDIA_BASE_URL } from "@/lib/ai/providers-meta";
 
 export const runtime = "nodejs";
 
 type Db = SupabaseClient<Database>;
 
+const aiKeyRequestSchema = z.object({
+  provider: z.enum(AI_PROVIDERS),
+  api_key: z.string().min(10),
+  default_model: z.string().min(1).max(200),
+});
+
 const deleteSchema = z.object({
   workspace_id: z.string().uuid(),
-  provider: z.enum(["anthropic", "openai", "google"]),
+  provider: z.enum(AI_PROVIDERS),
 });
 
 const testSchema = z.object({
-  provider: z.enum(["anthropic", "openai", "google"]),
+  provider: z.enum(AI_PROVIDERS),
   api_key: z.string().min(10),
 });
 
@@ -143,7 +149,7 @@ export async function PATCH(request: NextRequest) {
     const parsed = z
       .object({
         workspace_id: z.string().uuid(),
-        provider: z.enum(["anthropic", "openai", "google"]),
+        provider: z.enum(AI_PROVIDERS),
         is_active: z.boolean(),
         default_model: z.string().min(1).optional(),
       })
@@ -267,6 +273,13 @@ export async function PUT(request: NextRequest) {
         detail = ok ? "Conectado" : `HTTP ${res.status}`;
       } else if (provider === "openai") {
         const res = await fetch("https://api.openai.com/v1/models", {
+          signal: AbortSignal.timeout(10_000),
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        ok = res.ok;
+        detail = ok ? "Conectado" : `HTTP ${res.status}`;
+      } else if (provider === "nvidia") {
+        const res = await fetch(`${NVIDIA_BASE_URL}/models`, {
           signal: AbortSignal.timeout(10_000),
           headers: { Authorization: `Bearer ${apiKey}` },
         });

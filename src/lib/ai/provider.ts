@@ -7,6 +7,7 @@ import type { LanguageModel } from "ai";
 import { decrypt } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { AIProvider } from "@/types/domain";
+import { AI_PROVIDERS, NVIDIA_BASE_URL, PROVIDER_META } from "@/lib/ai/providers-meta";
 
 export class AIKeyNotFoundError extends Error {
   constructor() {
@@ -28,11 +29,17 @@ interface WorkspaceAIConfig {
   defaultModel: string;
 }
 
-export const DEFAULT_MODELS: Record<AIProvider, string> = {
-  anthropic: "claude-sonnet-5-5",
-  openai: "gpt-5",
-  google: "gemini-3.8-flash",
-};
+/**
+ * Modelos NVIDIA usam o modo "tool" do generateObject (structuredOutputs desligado).
+ * Na avaliação (scripts/eval-ai-provider.mjs) o modo tool teve mais acertos que
+ * json_schema na maioria dos Nemotron e não estourou timeout.
+ */
+const NVIDIA_MODEL_SETTINGS = { structuredOutputs: false };
+
+/** Modelo padrão de cada provedor = primeiro da lista em PROVIDER_META. */
+export const DEFAULT_MODELS = Object.fromEntries(
+  AI_PROVIDERS.map((p) => [p, PROVIDER_META[p].models[0]])
+) as Record<AIProvider, string>;
 
 /**
  * Resolve a chave BYOK ativa do workspace e instancia o provider.
@@ -77,6 +84,13 @@ export async function getWorkspaceModel(workspaceId: string, userId: string): Pr
       break;
     case "google":
       model = createGoogleGenerativeAI({ apiKey })(defaultModel);
+      break;
+    case "nvidia":
+      // API OpenAI-compatível; "compatible" evita parâmetros exclusivos da OpenAI
+      model = createOpenAI({ apiKey, baseURL: NVIDIA_BASE_URL, compatibility: "compatible", name: "nvidia" })(
+        defaultModel,
+        NVIDIA_MODEL_SETTINGS
+      );
       break;
     default:
       throw new Error(`Provider não suportado: ${keyRow.provider}`);

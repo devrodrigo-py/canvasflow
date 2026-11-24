@@ -171,12 +171,6 @@ export const summarizeCanvasRequestSchema = z.object({
 
 // ---------- Config de chaves BYOK ----------
 
-export const aiKeyRequestSchema = z.object({
-  provider: z.enum(["anthropic", "openai", "google"]),
-  api_key: z.string().min(10),
-  default_model: z.string().min(1),
-});
-
 export const mcpTokenRequestSchema = z.object({
   name: z.string().min(1).max(100),
   actor_label: z.string().min(1).max(100).default("Claude Agent"),

@@ -857,7 +857,7 @@ export interface Database {
       canvas_node_type: "task_card" | "sticky_note" | "frame" | "doc_block";
       canvas_edge_type: "blocks" | "parent_of" | "relates_to" | "derived_from";
       actor_type: "human" | "internal_ai" | "external_agent";
-      ai_provider: "anthropic" | "openai" | "google";
+      ai_provider: "anthropic" | "openai" | "google" | "nvidia";
     };
     CompositeTypes: {
       [_ in never]: never;

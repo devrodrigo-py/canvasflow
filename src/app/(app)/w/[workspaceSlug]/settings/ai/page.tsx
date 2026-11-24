@@ -22,22 +22,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AI_PROVIDERS, PROVIDER_META, type AIProviderId } from "@/lib/ai/providers-meta";
 import { KeyRound, Loader2, Trash2, PlayCircle, PowerCircle, ShieldCheck } from "lucide-react";
 
 interface AIKeyRow {
   id: string;
-  provider: "anthropic" | "openai" | "google";
+  provider: AIProviderId;
   default_model: string;
   key_preview: string;
   is_active: boolean;
   created_at: string;
 }
 
-const PROVIDER_MODELS: Record<string, string[]> = {
-  anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
-  openai: ["gpt-4o", "gpt-4o-mini", "o3-mini"],
-  google: ["gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-2.5-flash"],
-};
+const PROVIDER_MODELS = Object.fromEntries(
+  AI_PROVIDERS.map((p) => [p, PROVIDER_META[p].models])
+) as Record<AIProviderId, string[]>;
 
 export default function AISettingsPage() {
   const params = useParams<{ workspaceSlug: string }>();
@@ -52,7 +51,7 @@ export default function AISettingsPage() {
   const [success, setSuccess] = React.useState("");
 
   // Formulário
-  const [provider, setProvider] = React.useState<"anthropic" | "openai" | "google">("anthropic");
+  const [provider, setProvider] = React.useState<AIProviderId>("anthropic");
   const [apiKey, setApiKey] = React.useState("");
   const [defaultModel, setDefaultModel] = React.useState(PROVIDER_MODELS.anthropic[0]);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -243,9 +242,11 @@ export default function AISettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                    <SelectItem value="google">Google (Gemini)</SelectItem>
+                    {AI_PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {PROVIDER_META[p].label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -271,7 +272,7 @@ export default function AISettingsPage() {
               <Input
                 id="api_key"
                 type="password"
-                placeholder={provider === "anthropic" ? "sk-ant-..." : provider === "openai" ? "sk-..." : "AIza..."}
+                placeholder={PROVIDER_META[provider].keyPlaceholder}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
