@@ -20,6 +20,9 @@ describe("safeRedirectPath", () => {
     expect(safeRedirectPath("/\n/evil.com")).toBe("/");
     expect(safeRedirectPath("/\\evil.com")).toBe("/");
     expect(safeRedirectPath("/ /evil.com")).toBe("/");
+    expect(safeRedirectPath("/.//evil.com")).toBe("/");
+    expect(safeRedirectPath("/a/..//evil.com")).toBe("/");
+    expect(safeRedirectPath("/%2e//evil.com")).toBe("/");
     expect(safeRedirectPath("/%2F%2Fevil.com")).toBe("/%2F%2Fevil.com");
   });
 

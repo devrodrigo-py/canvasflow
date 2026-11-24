@@ -61,18 +61,17 @@ export function useCanvasPresence({
     channel
       .on("broadcast", { event: "cursor" }, ({ payload }) => {
         const p = payload as { userId: string; name: string; x: number; y: number };
+        // Atualiza só o cursor: substituir a entrada inteira apagava canWrite (vindo da
+        // presença) e tirava o líder da eleição, criando dois líderes de auto-layout
         setPresenceUsers((prev) => {
           const existing = prev.find((u) => u.id === p.userId);
-          const others = prev.filter((u) => u.id !== p.userId);
+          if (existing) {
+            return prev.map((u) => (u.id === p.userId ? { ...u, cursor: { x: p.x, y: p.y } } : u));
+          }
+          // Cursor chegou antes do sync de presença: sem canWrite até o próximo sync
           return [
-            ...others,
-            {
-              id: p.userId,
-              name: p.name,
-              color: existing?.color ?? colorForUser(p.userId),
-              cursor: { x: p.x, y: p.y },
-              viewport: existing?.viewport,
-            },
+            ...prev,
+            { id: p.userId, name: p.name, color: colorForUser(p.userId), cursor: { x: p.x, y: p.y } },
           ];
         });
       })

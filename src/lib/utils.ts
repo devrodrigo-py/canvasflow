@@ -19,6 +19,9 @@ export function safeRedirectPath(next: string | null | undefined, fallback = "/"
     const base = "http://canvasflow.invalid";
     const url = new URL(next, base);
     if (url.origin !== base) return fallback;
+    // A normalização pode produzir "//" no início (ex.: "/.//evil.com" vira "//evil.com"),
+    // que o navegador trata como URL de outra origem
+    if (url.pathname.startsWith("//")) return fallback;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return fallback;
