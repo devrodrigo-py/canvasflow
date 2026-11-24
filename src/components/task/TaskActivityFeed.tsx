@@ -18,14 +18,13 @@ import {
   FileText,
   MessageSquare,
   LayoutDashboard,
-  ExternalLink,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+
 
 interface TaskActivityFeedProps {
   activities: ActivityLog[];

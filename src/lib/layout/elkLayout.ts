@@ -1,8 +1,22 @@
-// Build bundled do ELK: não depende de 'web-worker' no bundle do webpack
-import ElkConstructor, { ElkNode, ElkExtendedEdge, ElkEdgeSection } from "elkjs/lib/elk.bundled.js";
+import type { ElkNode, ElkExtendedEdge, ElkEdgeSection } from "elkjs/lib/elk.bundled.js";
 import { CanvasNode, CanvasEdge, CanvasNodeType } from "@/types/domain";
 
-const elk = new ElkConstructor();
+type ElkInstance = { layout: (graph: ElkNode) => Promise<ElkNode> };
+let elkPromise: Promise<ElkInstance> | null = null;
+
+/**
+ * ELK (~400 kB) é carregado sob demanda, só quando um layout é pedido:
+ * tira o peso do bundle inicial do canvas. Build bundled: sem dependência de 'web-worker'.
+ */
+function getElk(): Promise<ElkInstance> {
+  if (!elkPromise) {
+    elkPromise = import("elkjs/lib/elk.bundled.js").then((mod) => {
+      const Elk = (mod as unknown as { default: new () => ElkInstance }).default;
+      return new Elk();
+    });
+  }
+  return elkPromise;
+}
 
 export interface LayoutOptions {
   direction?: "DOWN" | "UP" | "LEFT" | "RIGHT";
@@ -141,7 +155,7 @@ export async function calculateAutoLayout(
   }
 
   const elkGraph = toElkGraph(nodes, edges, options);
-  const layouted = await elk.layout(elkGraph);
+  const layouted = await (await getElk()).layout(elkGraph);
 
   const result: LayoutResult = {
     nodes: [],
@@ -190,74 +204,4 @@ export async function calculateAutoLayout(
   }
 
   return result;
-}
-
-/**
- * Posiciona nós filhos ao lado do nó pai (para auto-layout simples)
- */
-export function positionNodesAroundParent(
-  parentNode: CanvasNode,
-  childNodes: CanvasNode[],
-  spacing: number = 80
-): Array<{ id: string; x: number; y: number }> {
-  const results: Array<{ id: string; x: number; y: number }> = [];
-  const parentWidth = parentNode.width || getDefaultWidth(parentNode.node_type);
-  const parentHeight = parentNode.height || getDefaultHeight(parentNode.node_type);
-
-  // Posições ao redor do pai: direita, baixo, esquerda, cima
-  const positions = [
-    { x: parentNode.position_x + parentWidth + spacing, y: parentNode.position_y }, // direita
-    { x: parentNode.position_x, y: parentNode.position_y + parentHeight + spacing }, // baixo
-    { x: parentNode.position_x - spacing, y: parentNode.position_y }, // esquerda
-    { x: parentNode.position_x, y: parentNode.position_y - spacing }, // cima
-  ];
-
-  childNodes.forEach((child, index) => {
-    const pos = positions[index % positions.length];
-    const childWidth = child.width || getDefaultWidth(child.node_type);
-    const childHeight = child.height || getDefaultHeight(child.node_type);
-
-    results.push({
-      id: child.id,
-      x: pos.x,
-      y: pos.y,
-    });
-  });
-
-  return results;
-}
-
-/**
- * Posiciona nós dentro de um frame (grid layout)
- */
-export function positionNodesInFrame(
-  frameNode: CanvasNode,
-  childNodes: CanvasNode[],
-  padding: number = 40,
-  spacing: number = 20
-): Array<{ id: string; x: number; y: number }> {
-  const results: Array<{ id: string; x: number; y: number }> = [];
-  const frameWidth = frameNode.width || 400;
-  const frameHeight = frameNode.height || 300;
-
-  const availableWidth = frameWidth - padding * 2;
-  const nodeWidth = 200; // largura média estimada
-  const cols = Math.max(1, Math.floor(availableWidth / (nodeWidth + spacing)));
-  const rows = Math.ceil(childNodes.length / cols);
-
-  childNodes.forEach((child, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-
-    const x = frameNode.position_x + padding + col * (nodeWidth + spacing);
-    const y = frameNode.position_y + padding + row * (120 + spacing); // altura média estimada
-
-    results.push({
-      id: child.id,
-      x,
-      y,
-    });
-  });
-
-  return results;
 }

@@ -50,7 +50,11 @@ supabase start
 pnpm db:reset   # sobe o banco + aplica supabase/migrations/*.sql
 ```
 
-A migração inicial cria todas as tabelas, enums, trigger de `task_key` (ex: `APP-1`), políticas RLS e o **bootstrap automático** (trigger em `auth.users` que cria workspace + projeto `APP` + canvas padrão com frame "Inbox da IA" e 2 post-its de boas-vindas para cada novo usuário).
+- `0001_initial_schema.sql`: tabelas, enums, trigger de `task_key` (ex: `APP-1`), RLS e o **bootstrap automático** (workspace + projeto `APP` + canvas padrão com "Inbox da IA" para cada novo usuário).
+- `0002_hardening.sql`: RLS por papel (viewer só lê), autoria verificada, auditoria por trigger, `task_dependencies` como fonte da verdade, RPCs transacionais, guardrail de agentes no banco, convites e expiração de tokens.
+
+> **Banco já existente (aplicado à mão com o antigo `apply-migration.mjs`)?** Marque a 0001 como aplicada antes do primeiro push:
+> `supabase migration repair --status applied 0001` e depois `supabase db push`.
 
 ### 5. Rodar o app
 
@@ -68,7 +72,8 @@ Faça signup/login em `/login` — o workspace de exemplo é criado automaticame
 | `pnpm build` | Build de produção |
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | TypeScript strict (`tsc --noEmit`) |
-| `pnpm test` | Testes unitários (Vitest) |
+| `pnpm test` | Testes unitários + migrações/RLS em Postgres embarcado (PGlite, sem Docker) |
+| `pnpm test:e2e` | Smoke E2E (Playwright; requer app + Supabase rodando) |
 | `pnpm db:reset` | Reset do banco + migrações |
 | `pnpm db:types` | Regenerar `src/types/database.ts` |
 
@@ -78,7 +83,8 @@ Faça signup/login em `/login` — o workspace de exemplo é criado automaticame
 2. **Promover post-it**: 1 clique converte em `TaskCardNode` oficial (cria a linha em `tasks` e preserva posição/conexões).
 3. **TaskDrawer** (duplo clique no card): editor TipTap com 3 abas — Especificação, Execução de Agentes, Discussão & Histórico.
 4. **Backlog** (`/backlog`): visões Lista/Kanban sincronizadas em tempo real; filtro "Aguardando Revisão da IA"; botão "Ver no Canvas".
-5. **Multiplayer**: cursores ao vivo (Presence + Broadcast, throttle 50ms), Follow Mode pelos avatares na barra superior.
+5. **Multiplayer**: cursores ao vivo (Presence + Broadcast, throttle 50ms), Follow Mode pelos avatares na barra superior. Convide pessoas em **Settings → Membros** (link de uso único).
+6. **Dependências**: conectar dois cards de tarefa registra a dependência em `task_dependencies` (fonte da verdade). Apagar o card não apaga a dependência; recolocar a tarefa no canvas recria a aresta.
 
 ## IA Interna (BYOK)
 
@@ -133,15 +139,22 @@ Ou via CLI: `claude mcp add --transport http canvasflow http://localhost:3000/ap
 
 ## Segurança
 
-- RLS em todas as tabelas; acesso a `ai_provider_keys`/`agent_tokens` restrito a owner/admin.
-- MCP usa service role **somente após** validar o `token_hash` e sempre filtrado pelo `workspace_id` (e `project_id`, se definido no token).
+- **Papéis:** `owner`/`admin` gerenciam membros, chaves e tokens; `member` edita; `viewer` só lê (aplicado no RLS, não só na UI). Admin não altera nem remove owner; o último owner não pode sair.
+- **Autoria verificada:** comentários e logs exigem `author_user_id`/`actor_user_id = auth.uid()`; usuários não podem se passar por agente externo nem escrever no `agent_execution_log`.
+- **Auditoria confiável:** criação/alteração de tarefas é registrada por trigger no banco (`activity_logs`), não pelo cliente.
+- **Guardrail no banco:** agentes só concluem (`done`) via RPC com `allow_direct_done`; qualquer outra tentativa é rejeitada mesmo com service role.
+- **MCP:** token `cf_pat_` guardado como SHA-256, com expiração (30/90/365 dias), rate limit por token (120/min), proteção DNS rebinding (`NEXT_PUBLIC_APP_URL` + `MCP_ALLOWED_HOSTS`) e consultas sempre filtradas pelo workspace/projeto do token.
+- **BYOK:** AES-256-GCM com chave versionada (`APP_ENCRYPTION_KEY_VERSION` + `APP_ENCRYPTION_KEY_V<n>` para rotação); chaves triviais são rejeitadas; a chave é lida no servidor só após verificar que o usuário é writer do workspace.
+- Rate limit também nas rotas de IA (20/min por usuário), teste de chaves e convites. O limitador é em memória: em deploy com várias instâncias, troque por Redis/Upstash (`src/lib/rate-limit.ts`).
 - Segredos apenas em arquivos server-only (`import "server-only"`).
 
 ## Testes
 
 ```bash
-pnpm test                                  # unitários: crypto, elkLayout, mcp-guardrails
-npx playwright test tests/e2e/core-flow.spec.ts   # smoke E2E (ver variáveis no topo do arquivo)
+pnpm test        # unitários + tests/db (aplica todas as migrações num Postgres PGlite e testa RLS/triggers/RPCs)
+pnpm test:e2e    # smoke E2E (ver variáveis no topo de tests/e2e/core-flow.spec.ts)
 ```
+
+O CI (`.github/workflows/ci.yml`) roda lint, typecheck, testes e build em todo PR.
 
 O E2E cobre: login → criar post-it → promover para tarefa → editar spec → atualizar via MCP simulada → verificar atualização em tempo real no card e no backlog.

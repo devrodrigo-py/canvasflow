@@ -6,15 +6,12 @@ import {
   StickyNote,
   Square,
   FileText,
-  GitBranch,
   Wand2,
   LayoutDashboard,
   ZoomIn,
   ZoomOut,
   RotateCcw,
   LayoutGrid,
-  Settings,
-  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";

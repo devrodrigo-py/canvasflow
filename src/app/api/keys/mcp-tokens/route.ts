@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await db
       .from("agent_tokens")
       .select(
-        "id, name, actor_label, token_prefix, scopes, allow_direct_done, project_id, last_used_at, revoked_at, created_at"
+        "id, name, actor_label, token_prefix, scopes, allow_direct_done, project_id, last_used_at, revoked_at, expires_at, created_at"
       )
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false });
@@ -82,8 +82,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Apenas owners/admins podem criar tokens" }, { status: 403 });
     }
 
-    const { name, actor_label: actorLabel, project_id: projectId, scopes, allow_direct_done: allowDirectDone } =
-      parsed.data;
+    const {
+      name,
+      actor_label: actorLabel,
+      project_id: projectId,
+      scopes,
+      allow_direct_done: allowDirectDone,
+      expires_in_days: expiresInDays,
+    } = parsed.data;
+
+    // O projeto restrito precisa pertencer ao mesmo workspace do token
+    if (projectId) {
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("id", projectId)
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      if (!project) {
+        return NextResponse.json({ error: "Projeto não pertence a este workspace" }, { status: 400 });
+      }
+    }
 
     // Token exibido uma única vez; apenas o hash é persistido
     const token = generateToken();
@@ -98,6 +117,7 @@ export async function POST(request: NextRequest) {
         token_prefix: token.slice(0, 12),
         scopes,
         allow_direct_done: allowDirectDone,
+        expires_at: expiresInDays ? new Date(Date.now() + expiresInDays * 86_400_000).toISOString() : null,
         created_by: user.id,
       })
       .select("id")

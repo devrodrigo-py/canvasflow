@@ -1,6 +1,6 @@
 packages:
   - .
-allowScripts:
-  - esbuild
-  - sharp
-  - supabase
+allowBuilds:
+  esbuild: true
+  sharp: true
+  supabase: true

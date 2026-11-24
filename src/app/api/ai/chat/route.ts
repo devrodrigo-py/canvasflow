@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateObject } from "ai";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/database";
-import { createClient } from "@/lib/supabase/server";
-import { getWorkspaceModel, AIKeyNotFoundError } from "@/lib/ai/provider";
+import { getWorkspaceModel } from "@/lib/ai/provider";
 import { chatActionsSchema, chatRequestSchema } from "@/lib/ai/schemas";
-import { createTask, logActivity } from "@/lib/services/tasks.service";
+import { createTaskWithNode, logActivity } from "@/lib/services/tasks.service";
 import { createNode } from "@/lib/services/canvas.service";
+import { requireAIUser, aiErrorResponse } from "@/lib/ai/route-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
-
-type Db = SupabaseClient<Database>;
 
 const STICKY_COLORS = ["#fef9c3", "#dcfce7", "#dbeafe", "#fce7f3", "#e0e7ff"];
 
@@ -22,13 +18,9 @@ interface CreatedItem {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-    }
+    const auth = await requireAIUser();
+    if (!auth.ok) return auth.response;
+    const { supabase, user } = auth;
 
     const body = await request.json().catch(() => null);
     const parsed = chatRequestSchema.safeParse(body);
@@ -76,7 +68,7 @@ export async function POST(request: NextRequest) {
         .join(", ") || "nenhum"})`,
     ].join("\n");
 
-    const { model } = await getWorkspaceModel(supabase as unknown as Db, workspaceId);
+    const { model } = await getWorkspaceModel(workspaceId, user.id);
 
     const { object } = await generateObject({
       model,
@@ -126,7 +118,7 @@ Diretrizes:
           x: suggestedOrigin.x + col * 240,
           y: suggestedOrigin.y + row * 200,
         };
-        await createNode(supabase as unknown as Db, {
+        await createNode(supabase, {
           canvasId,
           nodeType: "sticky_note",
           position,
@@ -135,33 +127,18 @@ Diretrizes:
         created.push({ type: "sticky", label: action.text.slice(0, 60) });
         stickyIndex++;
       } else if (action.type === "create_task") {
-        const task = await createTask(supabase as unknown as Db, {
-          projectId,
+        // Tarefa + card numa transação, em coluna à direita da origem
+        const { task } = await createTaskWithNode(supabase, {
+          canvasId,
           title: action.title,
+          position: { x: suggestedOrigin.x + 600, y: suggestedOrigin.y + taskIndex * 190 },
           type: action.task_type,
           priority: action.priority,
           status: action.status,
           specMarkdown: action.spec_markdown,
-          acceptanceCriteria: action.acceptance_criteria.map((text, i) => ({
-            id: `${Date.now()}-${i}`,
-            text,
-            completed: false,
-          })),
+          acceptanceCriteria: action.acceptance_criteria,
           actorType: "internal_ai",
           actorLabel: "IA Interna (chat)",
-        });
-
-        // Card projetado no canvas com posicionamento em coluna à direita da origem
-        const position = {
-          x: suggestedOrigin.x + 600,
-          y: suggestedOrigin.y + taskIndex * 190,
-        };
-        await createNode(supabase as unknown as Db, {
-          canvasId,
-          nodeType: "task_card",
-          position,
-          taskId: task.id,
-          data: { title: task.title },
         });
         created.push({ type: "task", label: `${task.task_key} — ${task.title}` });
         taskIndex++;
@@ -170,7 +147,7 @@ Diretrizes:
           x: suggestedOrigin.x + 1200,
           y: suggestedOrigin.y + frameIndex * 680,
         };
-        await createNode(supabase as unknown as Db, {
+        await createNode(supabase, {
           canvasId,
           nodeType: "frame",
           position,
@@ -184,7 +161,7 @@ Diretrizes:
     }
 
     if (created.length > 0) {
-      await logActivity(supabase as unknown as Db, {
+      await logActivity(supabase, {
         workspaceId,
         projectId,
         taskId: null,
@@ -201,24 +178,6 @@ Diretrizes:
       created,
     });
   } catch (error) {
-    if (error instanceof AIKeyNotFoundError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    // Erros de provedor (503, rate limit etc.) com mensagem amigável
-    const message = error instanceof Error ? error.message : "";
-    if (error instanceof Error && (error.name === "AbortError" || message.includes("aborted") || message.includes("timeout"))) {
-      return NextResponse.json(
-        { error: "A IA demorou demais para responder. Tente novamente em alguns instantes." },
-        { status: 504 }
-      );
-    }
-    if (message.includes("503") || message.toLowerCase().includes("overloaded") || message.toLowerCase().includes("high demand")) {
-      return NextResponse.json(
-        { error: "O modelo de IA está com alta demanda agora. Tente novamente em alguns instantes." },
-        { status: 503 }
-      );
-    }
-    console.error("ai/chat:", error);
-    return NextResponse.json({ error: "Erro interno no chat de IA" }, { status: 500 });
+    return aiErrorResponse(error, "ai/chat", "Erro interno no chat de IA");
   }
 }

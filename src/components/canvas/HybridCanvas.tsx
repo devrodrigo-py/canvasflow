@@ -5,11 +5,9 @@ import {
   ReactFlow,
   Node,
   Edge,
-  Connection,
   OnNodesChange,
   OnEdgesChange,
   OnConnect,
-  addEdge,
   Viewport,
   Background,
   Controls,
@@ -28,7 +26,7 @@ import {
   BackgroundVariant,
   SelectionMode,
 } from "@xyflow/react";
-import { cn } from "@/lib/utils";
+
 import { CanvasToolbar } from "./CanvasToolbar";
 import { LiveCursors } from "./LiveCursors";
 import { FollowModeBar } from "./FollowModeBar";
@@ -52,6 +50,8 @@ interface HybridCanvasProps {
   initialViewport?: Viewport;
   onNodesChange: (nodes: CanvasNode[]) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
+  /** Persiste a conexão; a aresta entra no estado pela resposta/realtime. */
+  onCreateEdge: (sourceNodeId: string, targetNodeId: string) => void;
   onViewportChange: (viewport: Viewport) => void;
   onAddStickyNote: (position: { x: number; y: number }) => void;
   onAddTask: (position: { x: number; y: number }) => void;
@@ -115,6 +115,7 @@ interface NodeCallbacks {
   onDeleteDocBlock: (nodeId: string) => void;
   onDuplicateDocBlock: (nodeId: string) => void;
   onOpenDocBlockEditor: (nodeId: string) => void;
+  onOpenTaskDrawer: (taskId: string) => void;
 }
 
 function canvasNodeToReactFlowNode(canvasNode: CanvasNode, tasks: Record<string, any>, callbacks?: NodeCallbacks): Node {
@@ -160,6 +161,8 @@ function canvasNodeToReactFlowNode(canvasNode: CanvasNode, tasks: Record<string,
   // Add task data for task_card nodes
   if (canvasNode.node_type === "task_card" && canvasNode.task_id && tasks[canvasNode.task_id]) {
     (baseNode.data as any).task = tasks[canvasNode.task_id];
+    // Sem este callback o duplo clique no card lançava "onOpenDrawer is not a function"
+    if (callbacks) (baseNode.data as any).onOpenDrawer = callbacks.onOpenTaskDrawer;
   }
 
   return baseNode;
@@ -188,6 +191,7 @@ export function HybridCanvas({
   initialViewport,
   onNodesChange,
   onEdgesChange,
+  onCreateEdge,
   onViewportChange,
   onAddStickyNote,
   onAddTask,
@@ -240,6 +244,7 @@ export function HybridCanvas({
     onDeleteDocBlock,
     onDuplicateDocBlock,
     onOpenDocBlockEditor,
+    onOpenTaskDrawer,
   };
 
   // Sync: mescla nós do banco no estado RF sem recriar objetos (recriar reseta
@@ -255,7 +260,7 @@ export function HybridCanvas({
         if (existing) {
           // Compara conteúdo sem os handlers (injetados nos dois lados via ref estável)
           const stripHandlers = (d: Record<string, unknown>) => {
-            const { onPromote: _p, onUpdate: _u, onDelete: _d, onDuplicate: _c, onToggleCollapse: _t, onOpenEditor: _o, ...rest } = d;
+            const { onPromote: _p, onUpdate: _u, onDelete: _d, onDuplicate: _c, onToggleCollapse: _t, onOpenEditor: _o, onOpenDrawer: _od, ...rest } = d;
             return rest;
           };
           const samePosition =
@@ -329,19 +334,10 @@ export function HybridCanvas({
 
   // Handle connect
   const handleConnect: OnConnect = (connection) => {
-    const newEdge = addEdge(
-      {
-        ...connection,
-        type: "dependency",
-        data: { edgeType: "relates_to" },
-        markerEnd: { type: "arrowclosed" as const },
-        style: { strokeWidth: 2 },
-      },
-      edges
-    );
-    setEdges(newEdge);
-    const canvasEdges = newEdge.map((e) => reactFlowEdgeToCanvasEdge(e));
-    onEdgesChange(canvasEdges);
+    // Antes a aresta só existia no estado local e sumia ao recarregar
+    if (connection.source && connection.target) {
+      onCreateEdge(connection.source, connection.target);
+    }
   };
 
   // Handle viewport change

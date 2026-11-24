@@ -465,6 +465,7 @@ export interface Database {
           encrypted_api_key: string;
           key_iv: string;
           key_auth_tag: string;
+          key_version: number;
           key_preview: string;
           is_active: boolean;
           created_by: string;
@@ -478,6 +479,7 @@ export interface Database {
           encrypted_api_key: string;
           key_iv: string;
           key_auth_tag: string;
+          key_version?: number;
           key_preview: string;
           is_active?: boolean;
           created_by: string;
@@ -491,6 +493,7 @@ export interface Database {
           encrypted_api_key?: string;
           key_iv?: string;
           key_auth_tag?: string;
+          key_version?: number;
           key_preview?: string;
           is_active?: boolean;
           created_by?: string;
@@ -526,6 +529,7 @@ export interface Database {
           allow_direct_done: boolean;
           last_used_at: string | null;
           revoked_at: string | null;
+          expires_at: string | null;
           created_by: string;
           created_at: string;
         };
@@ -541,6 +545,7 @@ export interface Database {
           allow_direct_done?: boolean;
           last_used_at?: string | null;
           revoked_at?: string | null;
+          expires_at?: string | null;
           created_by: string;
           created_at?: string;
         };
@@ -556,6 +561,7 @@ export interface Database {
           allow_direct_done?: boolean;
           last_used_at?: string | null;
           revoked_at?: string | null;
+          expires_at?: string | null;
           created_by?: string;
           created_at?: string;
         };
@@ -579,6 +585,101 @@ export interface Database {
             columns: ["created_by"];
             isOneToOne: false;
             referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      task_dependencies: {
+        Row: {
+          id: string;
+          project_id: string;
+          source_task_id: string;
+          target_task_id: string;
+          dependency_type: Database["public"]["Enums"]["canvas_edge_type"];
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          source_task_id: string;
+          target_task_id: string;
+          dependency_type: Database["public"]["Enums"]["canvas_edge_type"];
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          source_task_id?: string;
+          target_task_id?: string;
+          dependency_type?: Database["public"]["Enums"]["canvas_edge_type"];
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_dependencies_source_task_id_fkey";
+            columns: ["source_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_dependencies_target_task_id_fkey";
+            columns: ["target_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      workspace_invites: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          email: string | null;
+          role: Database["public"]["Enums"]["workspace_role"];
+          token_hash: string;
+          created_by: string;
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+          revoked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          email?: string | null;
+          role?: Database["public"]["Enums"]["workspace_role"];
+          token_hash: string;
+          created_by: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          revoked_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          email?: string | null;
+          role?: Database["public"]["Enums"]["workspace_role"];
+          token_hash?: string;
+          created_by?: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          revoked_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "workspace_invites_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
             referencedColumns: ["id"];
           }
         ];
@@ -656,6 +757,77 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
+      is_workspace_writer: {
+        Args: { ws_id: string };
+        Returns: boolean;
+      };
+      is_workspace_owner: {
+        Args: { ws_id: string };
+        Returns: boolean;
+      };
+      accept_workspace_invite: {
+        Args: { p_token_hash: string };
+        Returns: Json;
+      };
+      create_task_with_node: {
+        Args: {
+          p_canvas_id: string;
+          p_title: string;
+          p_position_x: number;
+          p_position_y: number;
+          p_type?: Database["public"]["Enums"]["task_type"];
+          p_priority?: Database["public"]["Enums"]["task_priority"];
+          p_status?: Database["public"]["Enums"]["task_status"];
+          p_spec_markdown?: string;
+          p_acceptance_criteria?: Json;
+          p_actor_type?: Database["public"]["Enums"]["actor_type"];
+          p_actor_label?: string | null;
+          p_needs_auto_layout?: boolean;
+        };
+        Returns: Json;
+      };
+      promote_sticky_to_task: {
+        Args: { p_node_id: string; p_actor_label?: string | null };
+        Returns: Json;
+      };
+      create_project_with_canvas: {
+        Args: {
+          p_workspace_id: string;
+          p_name: string;
+          p_slug: string;
+          p_key_prefix: string;
+          p_description?: string | null;
+        };
+        Returns: Json;
+      };
+      agent_update_task_status: {
+        Args: {
+          p_task_id: string;
+          p_status: Database["public"]["Enums"]["task_status"];
+          p_entry: Json;
+          p_actor_label: string;
+          p_allow_direct_done?: boolean;
+        };
+        Returns: Json;
+      };
+      agent_append_note: {
+        Args: { p_task_id: string; p_entry: Json; p_actor_label: string };
+        Returns: Json;
+      };
+      agent_create_linked_task: {
+        Args: {
+          p_project_id: string;
+          p_title: string;
+          p_type: Database["public"]["Enums"]["task_type"];
+          p_actor_label: string;
+          p_priority?: Database["public"]["Enums"]["task_priority"];
+          p_spec_markdown?: string;
+          p_acceptance_criteria?: Json;
+          p_parent_task_key?: string | null;
+          p_edge_type?: Database["public"]["Enums"]["canvas_edge_type"] | null;
+        };
+        Returns: Json;
+      };
       generate_task_key: {
         Args: Record<PropertyKey, never>;
         Returns: unknown;

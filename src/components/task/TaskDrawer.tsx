@@ -5,12 +5,10 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+
+
 import {
   X,
-  ChevronLeft,
-  ChevronRight,
   Maximize2,
   Minimize2,
   Save,
@@ -24,15 +22,21 @@ import {
   Sparkles,
   MessageSquare,
   LayoutDashboard,
-  ExternalLink,
-  Github,
   FileText,
 } from "lucide-react";
 import { TaskSpecEditor } from "./TaskSpecEditor";
 import { AgentExecutionLog } from "./AgentExecutionLog";
 import { TaskComments } from "./TaskComments";
 import { TaskActivityFeed } from "./TaskActivityFeed";
-import { Task, TaskStatus, TaskPriority, TaskType, ActorType, AcceptanceCriterion } from "@/types/domain";
+import {
+  Task,
+  TaskStatus,
+  TaskPriority,
+  TaskType,
+  AcceptanceCriterion,
+  Comment,
+  ActivityLog,
+} from "@/types/domain";
 
 interface TaskDrawerProps {
   task: Task | null;
@@ -46,10 +50,13 @@ interface TaskDrawerProps {
   onApproveAndComplete: (taskId: string) => Promise<void>;
   onGenerateSpec: (taskId: string) => Promise<void>;
   currentUserId: string;
-  comments: any[];
-  activities: any[];
+  comments: Comment[];
+  activities: ActivityLog[];
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  /** Leitores (viewer) não editam. */
+  readOnly?: boolean;
+  isGeneratingSpec?: boolean;
 }
 
 const statusOptions: { value: TaskStatus; label: string }[] = [
@@ -107,6 +114,8 @@ export function TaskDrawer({
   activities,
   isFullscreen,
   onToggleFullscreen,
+  readOnly = false,
+  isGeneratingSpec = false,
 }: TaskDrawerProps) {
   const [isSaving, setIsSaving] = React.useState(false);
   const [localTitle, setLocalTitle] = React.useState("");
@@ -344,11 +353,16 @@ export function TaskDrawer({
             {/* Spec Tab */}
             <TabsContent value="spec" className="h-full flex flex-col">
               <TaskSpecEditor
-                content={task.spec_markdown}
-                onChange={async (content) => {
-                  await onUpdateTask(task.id, { spec_markdown: content });
+                key={task.id}
+                specJson={task.spec_json}
+                specMarkdown={task.spec_markdown}
+                onChange={async (change) => {
+                  await onUpdateTask(task.id, {
+                    spec_json: change.spec_json as unknown as Task["spec_json"],
+                    spec_markdown: change.spec_markdown,
+                  });
                 }}
-                editable={true}
+                editable={!readOnly}
                 placeholder="Escreva a especificação técnica da tarefa..."
               />
               <div className="p-4 border-t border-border flex-shrink-0">
@@ -359,10 +373,10 @@ export function TaskDrawer({
                       size="sm"
                       onClick={handleGenerateSpec}
                       className="gap-1"
-                      disabled={isSaving}
+                      disabled={isSaving || readOnly || isGeneratingSpec}
                     >
-                      <Sparkles className="h-4 w-4" />
-                      Gerar/Refinar com IA
+                      <Sparkles className={cn("h-4 w-4", isGeneratingSpec && "animate-pulse")} />
+                      {isGeneratingSpec ? "Gerando spec..." : "Gerar/Refinar com IA"}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
@@ -396,6 +410,7 @@ export function TaskDrawer({
                       variant="destructive"
                       onClick={() => onApproveAndComplete(task.id)}
                       className="ml-auto gap-1"
+                      disabled={readOnly}
                     >
                       <CheckCircle className="h-4 w-4" />
                       Aprovar e Concluir
@@ -415,6 +430,7 @@ export function TaskDrawer({
                 onResolveComment={onResolveComment}
                 currentUserId={currentUserId}
                 taskId={task.id}
+                readOnly={readOnly}
               />
             </TabsContent>
 

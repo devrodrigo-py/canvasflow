@@ -1,10 +1,10 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+const PROTECTED_PREFIXES = ["/w/", "/invite/"];
+
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
+  let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,12 +15,8 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) {
-          cookiesToSet.forEach(({ name, value, options: _options }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({
-            request,
-          });
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           );
@@ -29,21 +25,34 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session if expired - required for Server Components
-  await supabase.auth.getUser();
+  // Revalida o usuário no Auth server (não confia apenas no cookie)
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { pathname, search } = request.nextUrl;
+
+  if (!user && PROTECTED_PREFIXES.some((p) => pathname.startsWith(p))) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = `?next=${encodeURIComponent(pathname + search)}`;
+    return NextResponse.redirect(url);
+  }
+
+  if (user && pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
 
   return supabaseResponse;
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
-     */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Ignora estáticos, imagens e as rotas de API (que autenticam por conta própria;
+    // /api/mcp usa Bearer token e não deve passar por refresh de cookie)
+    "/((?!_next/static|_next/image|api/|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -18,6 +18,8 @@ interface TaskCommentsProps {
   onResolveComment: (commentId: string, resolved: boolean) => Promise<void>;
   currentUserId: string;
   taskId: string;
+  /** Leitores (viewer) só visualizam: sem comentar, editar ou apagar. */
+  readOnly?: boolean;
 }
 
 export function TaskComments({
@@ -28,7 +30,10 @@ export function TaskComments({
   onResolveComment,
   currentUserId,
   taskId,
+  readOnly = false,
 }: TaskCommentsProps) {
+  // Sem id efetivo, nenhum comentário é tratado como "do autor" (esconde editar/apagar)
+  const actingUserId = readOnly ? "" : currentUserId;
   const [newComment, setNewComment] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [editingCommentId, setEditingCommentId] = React.useState<string | null>(null);
@@ -119,7 +124,7 @@ export function TaskComments({
                 <CommentItem
                   key={comment.id}
                   comment={comment}
-                  currentUserId={currentUserId}
+                  currentUserId={actingUserId}
                   editingCommentId={editingCommentId}
                   editText={editText}
                   onEdit={startEditing}
@@ -144,7 +149,7 @@ export function TaskComments({
                 <CommentItem
                   key={comment.id}
                   comment={comment}
-                  currentUserId={currentUserId}
+                  currentUserId={actingUserId}
                   editingCommentId={editingCommentId}
                   editText={editText}
                   onEdit={startEditing}
@@ -171,6 +176,7 @@ export function TaskComments({
       </ScrollArea>
 
       {/* Add Comment Form */}
+      {!readOnly && (
       <div className="p-4 border-t border-border">
         <form onSubmit={handleSubmit} className="flex flex-col gap-2">
           <div className="flex items-start gap-2">
@@ -209,6 +215,7 @@ export function TaskComments({
           </div>
         </form>
       </div>
+      )}
     </div>
   );
 }

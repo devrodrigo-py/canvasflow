@@ -1,10 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   calculateAutoLayout,
-  positionNodesAroundParent,
-  positionNodesInFrame,
 } from "@/lib/layout/elkLayout";
-import { CanvasNode, CanvasEdge, CanvasNodeType, CanvasEdgeType } from "@/types/domain";
+import { CanvasNode, CanvasEdge } from "@/types/domain";
 
 // Mock ELK (mesmo caminho do import em src/lib/layout/elkLayout.ts)
 vi.mock("elkjs/lib/elk.bundled.js", () => {
@@ -211,108 +209,6 @@ describe("elkLayout", () => {
       expect(result.nodes).toHaveLength(2);
       // Sem arestas de entrada, nenhuma seção de aresta é extraída
       expect(result.edges).toHaveLength(0);
-    });
-  });
-
-  describe("positionNodesAroundParent", () => {
-    it("should position children around parent node", () => {
-      const parent: CanvasNode = {
-        ...mockNodes[0],
-        id: "parent-1",
-        position_x: 100,
-        position_y: 100,
-        width: 280,
-        height: 160,
-      };
-
-      const children: CanvasNode[] = [
-        { ...mockNodes[0], id: "child-1", position_x: 0, position_y: 0 },
-        { ...mockNodes[0], id: "child-2", position_x: 0, position_y: 0 },
-        { ...mockNodes[0], id: "child-3", position_x: 0, position_y: 0 },
-        { ...mockNodes[0], id: "child-4", position_x: 0, position_y: 0 },
-        { ...mockNodes[0], id: "child-5", position_x: 0, position_y: 0 }, // 5th should wrap
-      ];
-
-      const result = positionNodesAroundParent(parent, children);
-
-      expect(result).toHaveLength(5);
-
-      // Primeiro filho à direita
-      expect(result[0].x).toBeGreaterThan(parent.position_x + parent.width!);
-      expect(result[0].y).toBe(parent.position_y);
-
-      // Segundo filho abaixo
-      expect(result[1].x).toBe(parent.position_x);
-      expect(result[1].y).toBeGreaterThan(parent.position_y + parent.height!);
-
-      // Quinto filho deve voltar para a direita (wrap)
-      expect(result[4].x).toBeGreaterThan(parent.position_x + parent.width!);
-    });
-
-    it("should handle empty children array", () => {
-      const parent: CanvasNode = {
-        ...mockNodes[0],
-        id: "parent-1",
-        position_x: 100,
-        position_y: 100,
-      };
-
-      const result = positionNodesAroundParent(parent, []);
-      expect(result).toHaveLength(0);
-    });
-  });
-
-  describe("positionNodesInFrame", () => {
-    it("should position children in a grid inside frame", () => {
-      const frame: CanvasNode = {
-        ...mockFrameNode,
-        position_x: 100,
-        position_y: 100,
-        width: 600,
-        height: 400,
-      };
-
-      const result = positionNodesInFrame(frame, mockChildNodes);
-
-      expect(result).toHaveLength(3);
-
-      // Todos devem estar dentro dos bounds do frame
-      for (const node of result) {
-        expect(node.x).toBeGreaterThanOrEqual(frame.position_x);
-        expect(node.x).toBeLessThan(frame.position_x + frame.width!);
-        expect(node.y).toBeGreaterThanOrEqual(frame.position_y);
-        expect(node.y).toBeLessThan(frame.position_y + frame.height!);
-      }
-
-      // Deve haver espaçamento entre nós
-      expect(result[1].x).toBeGreaterThan(result[0].x);
-    });
-
-    it("should handle empty children array", () => {
-      const frame: CanvasNode = {
-        ...mockFrameNode,
-        position_x: 100,
-        position_y: 100,
-      };
-
-      const result = positionNodesInFrame(frame, []);
-      expect(result).toHaveLength(0);
-    });
-
-    it("should respect custom padding and spacing", () => {
-      const frame: CanvasNode = {
-        ...mockFrameNode,
-        position_x: 0,
-        position_y: 0,
-        width: 400,
-        height: 300,
-      };
-
-      const result = positionNodesInFrame(frame, mockChildNodes, 80, 40);
-
-      // Com padding maior, nós devem começar mais longe da borda
-      expect(result[0].x).toBeGreaterThanOrEqual(80);
-      expect(result[0].y).toBeGreaterThanOrEqual(80);
     });
   });
 });

@@ -36,6 +36,7 @@ interface TokenRow {
   project_id: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
+  expires_at: string | null;
   created_at: string;
 }
 
@@ -57,6 +58,7 @@ export default function MCPSettingsPage() {
   const [actorLabel, setActorLabel] = React.useState("Claude Agent");
   const [projectId, setProjectId] = React.useState<string>("all");
   const [allowDirectDone, setAllowDirectDone] = React.useState(false);
+  const [expiresInDays, setExpiresInDays] = React.useState<string>("90");
   const [isCreating, setIsCreating] = React.useState(false);
   const [newToken, setNewToken] = React.useState<string | null>(null);
 
@@ -132,6 +134,7 @@ export default function MCPSettingsPage() {
           project_id: projectId === "all" ? null : projectId,
           scopes: ["tasks:read", "tasks:write", "canvas:write"],
           allow_direct_done: allowDirectDone,
+          expires_in_days: expiresInDays === "never" ? null : Number(expiresInDays),
         }),
       });
       const body = await res.json().catch(() => null);
@@ -240,7 +243,21 @@ export default function MCPSettingsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col justify-center gap-1">
+              <div className="space-y-2">
+                <Label>Validade</Label>
+                <Select value={expiresInDays} onValueChange={setExpiresInDays}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30 dias</SelectItem>
+                    <SelectItem value="90">90 dias (recomendado)</SelectItem>
+                    <SelectItem value="365">1 ano</SelectItem>
+                    <SelectItem value="never">Sem expiração</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col justify-center gap-1 sm:col-span-2">
                 <div className="flex items-center gap-3">
                   <Switch checked={allowDirectDone} onCheckedChange={setAllowDirectDone} id="allow-done" />
                   <Label htmlFor="allow-done">Permitir concluir (done) diretamente</Label>
@@ -302,6 +319,10 @@ export default function MCPSettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   Escopos: {token.scopes.join(", ")}
                   {token.last_used_at && ` · Último uso: ${new Date(token.last_used_at).toLocaleString()}`}
+                  {token.expires_at &&
+                    (new Date(token.expires_at).getTime() < Date.now()
+                      ? " · Expirado"
+                      : ` · Expira em ${new Date(token.expires_at).toLocaleDateString()}`)}
                 </p>
               </div>
               {isAdmin && !token.revoked_at && (
