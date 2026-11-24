@@ -88,7 +88,9 @@ Faça signup/login em `/login` — o workspace de exemplo é criado automaticame
 
 ## IA Interna (BYOK)
 
-Configure em **Settings → Chaves de IA** (`/w/{ws}/settings/ai`). A chave é criptografada com AES-256-GCM (`APP_ENCRYPTION_KEY`) e nunca retorna ao cliente. Endpoints:
+Configure em **Settings → Chaves de IA** (`/w/{ws}/settings/ai`). Provedores: Anthropic, OpenAI, Google e **NVIDIA Nemotron** (chave gratuita em build.nvidia.com; padrão `nemotron-3.5-lightning-30b-a3b`).
+
+Para comparar modelos de um provedor contra os schemas reais das rotas de IA: `NVIDIA_API_KEY=... pnpm eval:ai [modelos] [tool,json]`. A chave é criptografada com AES-256-GCM (`APP_ENCRYPTION_KEY`) e nunca retorna ao cliente. Endpoints:
 
 | Rota | Ação |
 | :--- | :--- |

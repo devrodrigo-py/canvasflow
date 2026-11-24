@@ -14,7 +14,8 @@
     "db:reset": "supabase db reset",
     "db:types": "supabase gen types typescript --local > src/types/database.ts",
     "test:e2e": "playwright test",
-    "user:create-test": "node --env-file=.env.local scripts/create-test-user.mjs"
+    "user:create-test": "node --env-file=.env.local scripts/create-test-user.mjs",
+    "eval:ai": "node --env-file-if-exists=.env.local scripts/eval-ai-provider.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",

@@ -5,7 +5,8 @@ export type TaskType = "epic" | "feature" | "task" | "bug" | "tech_debt";
 export type CanvasNodeType = "task_card" | "sticky_note" | "frame" | "doc_block";
 export type CanvasEdgeType = "blocks" | "parent_of" | "relates_to" | "derived_from";
 export type ActorType = "human" | "internal_ai" | "external_agent";
-export type AIProvider = "anthropic" | "openai" | "google";
+import type { AIProviderId } from "@/lib/ai/providers-meta";
+export type AIProvider = AIProviderId;
 
 export interface Workspace {
   id: string;

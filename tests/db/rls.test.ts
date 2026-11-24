@@ -459,6 +459,32 @@ describe("RPCs de agente (guardrail no banco)", () => {
   });
 });
 
+describe("chaves BYOK", () => {
+  it("aceita o provedor nvidia (migração 0003) e mantém uma chave ativa por workspace", async () => {
+    await asUser(db, OWNER, () =>
+      db.query(
+        `insert into ai_provider_keys (workspace_id, provider, default_model, encrypted_api_key, key_iv, key_auth_tag, key_preview, created_by)
+         values ($1, 'nvidia', 'nvidia/nemotron-3-ultra-550b-a55b', 'x', 'y', 'z', 'nvapi-...abcd', $2)`,
+        [workspaceId, OWNER]
+      )
+    );
+    await expect(
+      asUser(db, OWNER, () =>
+        db.query(
+          `insert into ai_provider_keys (workspace_id, provider, default_model, encrypted_api_key, key_iv, key_auth_tag, key_preview, created_by)
+           values ($1, 'openai', 'gpt-5', 'x', 'y', 'z', 'sk-...abcd', $2)`,
+          [workspaceId, OWNER]
+        )
+      )
+    ).rejects.toThrow(/ai_provider_keys_one_active/);
+  });
+
+  it("member não lê chaves BYOK", async () => {
+    const res = await asUser(db, MEMBER, () => db.query("select id from ai_provider_keys"));
+    expect(res.rows).toHaveLength(0);
+  });
+});
+
 describe("convites", () => {
   it("aceitar convite adiciona o membro e o link é de uso único", async () => {
     const NEWBIE = "00000000-0000-0000-0000-0000000000f1";
