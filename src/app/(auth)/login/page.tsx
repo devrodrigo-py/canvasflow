@@ -160,7 +160,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={8}
+                minLength={isSignUp ? 8 : undefined}
                 autoComplete={isSignUp ? "new-password" : "current-password"}
                 disabled={isLoading}
               />

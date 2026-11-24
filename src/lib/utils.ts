@@ -6,14 +6,23 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Aceita apenas caminhos internos ("/algo"), bloqueando open redirect
- * ("//evil.com", "/\\evil.com", URLs absolutas).
+ * Aceita apenas caminhos internos ("/algo"), bloqueando open redirect.
+ * Valida como o navegador normaliza a URL: ele descarta tab/CR/LF e trata a
+ * barra invertida como "/", então variantes como "/<TAB>/evil.com" viram
+ * "//evil.com" (outra origem). Por isso rejeitamos controle, espaço e barra invertida.
  */
 export function safeRedirectPath(next: string | null | undefined, fallback = "/"): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) {
+  if (!next || !next.startsWith("/")) return fallback;
+  if (/[\u0000-\u001f\u007f\s\\]/.test(next)) return fallback;
+  if (next.startsWith("//")) return fallback;
+  try {
+    const base = "http://canvasflow.invalid";
+    const url = new URL(next, base);
+    if (url.origin !== base) return fallback;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
     return fallback;
   }
-  return next;
 }
 
 /** Gera um slug ASCII a partir de um nome. */

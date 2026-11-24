@@ -7,6 +7,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import Link from "@tiptap/extension-link";
 import { common, createLowlight } from "lowlight";
 import { cn } from "@/lib/utils";
 import { htmlToMarkdown, isEmptySpecJson, markdownToHtml } from "@/lib/spec-format";
@@ -105,6 +106,13 @@ export function TaskSpecEditor({
       }),
       CodeBlockLowlight.configure({
         lowlight,
+      }),
+      // Sem a extensão de link, specs em Markdown perdiam as URLs ao serem salvas
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        protocols: ["http", "https", "mailto"],
+        HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
       }),
     ],
     content: initialContent(specJson, specMarkdown),

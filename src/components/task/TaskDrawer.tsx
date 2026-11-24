@@ -430,6 +430,7 @@ export function TaskDrawer({
                 onResolveComment={onResolveComment}
                 currentUserId={currentUserId}
                 taskId={task.id}
+                readOnly={readOnly}
               />
             </TabsContent>
 

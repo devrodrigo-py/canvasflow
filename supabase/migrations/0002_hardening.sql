@@ -131,8 +131,9 @@ create policy "Writers can create own comments" on comments
 create policy "Writers can update comments" on comments
   for update using (is_workspace_writer(workspace_id))
   with check (is_workspace_writer(workspace_id));
+-- Autoria sozinha não basta: quem foi rebaixado a viewer perde o direito de apagar
 create policy "Authors can delete their comments" on comments
-  for delete using (author_user_id = auth.uid());
+  for delete using (author_user_id = auth.uid() and is_workspace_writer(workspace_id));
 
 -- Activity logs: nunca mais `with check (true)`
 drop policy if exists "System can insert activity logs" on activity_logs;
@@ -527,6 +528,8 @@ declare
   v_payload jsonb;
   v_extra jsonb;
   v_changed text[];
+  v_actor_type actor_type;
+  v_actor_label text;
 begin
   select workspace_id into v_workspace from projects where id = new.project_id;
 
@@ -556,10 +559,33 @@ begin
     v_payload := v_payload || v_extra;
   end if;
 
+  -- Atribuição vem da identidade autenticada, nunca dos campos last_updated_by_*
+  -- (editáveis pelo cliente). Sem auth.uid() a escrita veio do servidor: as RPCs
+  -- de agente definem o rótulo a partir do token MCP validado.
+  if auth.uid() is not null then
+    select coalesce(
+             nullif(u.raw_user_meta_data ->> 'name', ''),
+             nullif(u.raw_user_meta_data ->> 'full_name', ''),
+             split_part(u.email, '@', 1),
+             'Usuário'
+           )
+      into v_actor_label
+      from auth.users u
+     where u.id = auth.uid();
+    v_actor_type := case when new.last_updated_by_type = 'internal_ai' then 'internal_ai'::actor_type
+                         else 'human'::actor_type end;
+    if v_actor_type = 'internal_ai' then
+      v_actor_label := 'IA Interna (via ' || coalesce(v_actor_label, 'Usuário') || ')';
+    end if;
+  else
+    v_actor_type := new.last_updated_by_type;
+    v_actor_label := new.last_updated_by_label;
+  end if;
+
   insert into activity_logs (workspace_id, project_id, task_id, actor_type, actor_user_id, actor_label, action, payload)
   values (
-    v_workspace, new.project_id, new.id, new.last_updated_by_type, auth.uid(),
-    coalesce(new.last_updated_by_label, 'Usuário'), v_action, v_payload
+    v_workspace, new.project_id, new.id, v_actor_type, auth.uid(),
+    coalesce(v_actor_label, 'Sistema'), v_action, v_payload
   );
   return new;
 end;

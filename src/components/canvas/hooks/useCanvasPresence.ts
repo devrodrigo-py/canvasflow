@@ -23,6 +23,8 @@ export interface PresenceUser {
   color: string;
   cursor?: { x: number; y: number };
   viewport?: Viewport;
+  /** Publicado na presença: só quem escreve pode ser eleito para o auto-layout. */
+  canWrite?: boolean;
 }
 
 /**
@@ -34,11 +36,13 @@ export function useCanvasPresence({
   canvasId,
   userId,
   userName,
+  canWrite,
 }: {
   supabase: Db;
   canvasId: string;
   userId: string;
   userName: string;
+  canWrite: boolean;
 }) {
   const [presenceUsers, setPresenceUsers] = React.useState<PresenceUser[]>([]);
   const [followedUserId, setFollowedUserId] = React.useState<string | null>(null);
@@ -85,21 +89,22 @@ export function useCanvasPresence({
             if (key === userId) continue;
             const meta = metas[0] as Record<string, unknown> | undefined;
             const existing = prev.find((u) => u.id === key);
-            next.push(
-              existing ?? {
-                id: key,
-                name: (meta?.name as string) ?? "Usuário",
-                avatar: meta?.avatar as string | undefined,
-                color: (meta?.color as string) ?? colorForUser(key),
-              }
-            );
+            next.push({
+              id: key,
+              name: (meta?.name as string) ?? existing?.name ?? "Usuário",
+              avatar: meta?.avatar as string | undefined,
+              color: (meta?.color as string) ?? colorForUser(key),
+              cursor: existing?.cursor,
+              viewport: existing?.viewport,
+              canWrite: meta?.canWrite === true,
+            });
           }
           return next;
         });
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          void channel.track({ name: userName, color: colorForUser(userId) });
+          void channel.track({ name: userName, color: colorForUser(userId), canWrite });
         }
       });
 
@@ -108,7 +113,7 @@ export function useCanvasPresence({
       setIsSynced(false);
       void supabase.removeChannel(channel);
     };
-  }, [supabase, canvasId, userId, userName]);
+  }, [supabase, canvasId, userId, userName, canWrite]);
 
   const broadcastCursor = React.useCallback(
     (screen: { x: number; y: number }) => {
@@ -131,11 +136,15 @@ export function useCanvasPresence({
     [userId]
   );
 
-  const presentUserIds = React.useMemo(() => presenceUsers.map((u) => u.id), [presenceUsers]);
+  // Viewers não entram na eleição: um leitor eleito travaria o auto-layout de todos
+  const presentWriterIds = React.useMemo(
+    () => presenceUsers.filter((u) => u.canWrite).map((u) => u.id),
+    [presenceUsers]
+  );
 
   return {
     presenceUsers,
-    presentUserIds,
+    presentWriterIds,
     isSynced,
     followedUserId,
     setFollowedUserId,

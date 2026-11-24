@@ -43,18 +43,18 @@ export default function CanvasPage() {
     canvasId: data.canvasId,
     userId: user.id,
     userName: user.name,
+    canWrite,
   });
 
-  // Só o líder posiciona nós pendentes. Se a presença não sincronizar em 3s (Realtime
+  // Só o líder (eleito entre quem tem escrita) posiciona nós pendentes. Se a presença não sincronizar em 3s (Realtime
   // indisponível), este cliente assume; a gravação condicional evita conflito no banco.
   const [presenceTimedOut, setPresenceTimedOut] = React.useState(false);
   React.useEffect(() => {
     const t = setTimeout(() => setPresenceTimedOut(true), 3000);
     return () => clearTimeout(t);
   }, []);
-  const isLeader = presence.isSynced
-    ? isLayoutLeader(user.id, presence.presentUserIds)
-    : presenceTimedOut;
+  const isLeader =
+    canWrite && (presence.isSynced ? isLayoutLeader(user.id, presence.presentWriterIds) : presenceTimedOut);
 
   const layout = useAutoLayout({
     supabase,

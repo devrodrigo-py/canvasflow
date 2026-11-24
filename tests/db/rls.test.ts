@@ -164,6 +164,39 @@ describe("activity_logs e comments", () => {
     ).rejects.toThrow(/row-level security/);
   });
 
+  it("viewer não apaga nem o próprio comentário", async () => {
+    // Comentário escrito quando o autor ainda tinha escrita (inserido pelo servidor)
+    const c = await one<{ id: string }>(
+      `insert into comments (workspace_id, author_user_id, author_label, body_markdown)
+       values ($1, $2, 'Viewer', 'antigo') returning id`,
+      [workspaceId, VIEWER]
+    );
+    await asUser(db, VIEWER, () => db.query("delete from comments where id = $1", [c.id]));
+    const still = await db.query("select 1 from comments where id = $1", [c.id]);
+    expect(still.rows).toHaveLength(1);
+  });
+
+  it("auditoria usa a identidade autenticada, não o rótulo enviado pelo cliente", async () => {
+    const task = await asUser(db, MEMBER, () =>
+      one<{ id: string }>(
+        "insert into tasks (project_id, title, last_updated_by_label) values ($1, 'atribuição', 'Owner') returning id",
+        [projectId]
+      )
+    );
+    await asUser(db, MEMBER, () =>
+      db.query("update tasks set status = 'todo', last_updated_by_label = 'Owner' where id = $1", [task.id])
+    );
+    const logs = await db.query<{ actor_label: string; actor_user_id: string }>(
+      "select actor_label, actor_user_id from activity_logs where task_id = $1",
+      [task.id]
+    );
+    expect(logs.rows.length).toBeGreaterThanOrEqual(2);
+    for (const log of logs.rows) {
+      expect(log.actor_label).toBe("member");
+      expect(log.actor_user_id).toBe(MEMBER);
+    }
+  });
+
   it("outro membro pode resolver, mas não editar texto alheio", async () => {
     const c = await asUser(db, OWNER, () =>
       one<{ id: string }>(

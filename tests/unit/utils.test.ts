@@ -14,6 +14,18 @@ describe("safeRedirectPath", () => {
     expect(safeRedirectPath("https://evil.com")).toBe("/");
     expect(safeRedirectPath(null)).toBe("/");
   });
+
+  it("bloqueia variantes que o navegador normaliza para outra origem", () => {
+    expect(safeRedirectPath("/\t/evil.com")).toBe("/");
+    expect(safeRedirectPath("/\n/evil.com")).toBe("/");
+    expect(safeRedirectPath("/\\evil.com")).toBe("/");
+    expect(safeRedirectPath("/ /evil.com")).toBe("/");
+    expect(safeRedirectPath("/%2F%2Fevil.com")).toBe("/%2F%2Fevil.com");
+  });
+
+  it("preserva query e hash de caminhos internos", () => {
+    expect(safeRedirectPath("/w/x?next=1#a")).toBe("/w/x?next=1#a");
+  });
 });
 
 describe("compareTaskKeys", () => {
