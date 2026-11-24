@@ -5,6 +5,7 @@ import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { encrypt, createKeyPreview } from "@/lib/crypto";
 import { aiKeyRequestSchema } from "@/lib/ai/schemas";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -97,6 +98,14 @@ export async function POST(request: NextRequest) {
     const { provider, api_key: apiKey, default_model: defaultModel } = parsed.data;
     const encrypted = encrypt(apiKey);
 
+    // Apenas uma chave ativa por workspace (índice único parcial): desativa as demais
+    const { error: deactivateError } = await db
+      .from("ai_provider_keys")
+      .update({ is_active: false })
+      .eq("workspace_id", workspaceId)
+      .neq("provider", provider);
+    if (deactivateError) throw deactivateError;
+
     // Upsert por (workspace_id, provider) — a constraint unique cobre isso
     const { error } = await db.from("ai_provider_keys").upsert(
       {
@@ -106,6 +115,7 @@ export async function POST(request: NextRequest) {
         encrypted_api_key: encrypted.encrypted,
         key_iv: encrypted.iv,
         key_auth_tag: encrypted.authTag,
+        key_version: encrypted.version,
         key_preview: createKeyPreview(apiKey),
         is_active: true,
         created_by: user.id,
@@ -149,6 +159,15 @@ export async function PATCH(request: NextRequest) {
     const { workspace_id: workspaceId, provider, is_active: isActive, default_model: defaultModel } = parsed.data;
     if (!(await requireAdminOf(db, workspaceId, user.id))) {
       return NextResponse.json({ error: "Apenas owners/admins podem alterar chaves" }, { status: 403 });
+    }
+
+    if (isActive) {
+      const { error: deactivateError } = await db
+        .from("ai_provider_keys")
+        .update({ is_active: false })
+        .eq("workspace_id", workspaceId)
+        .neq("provider", provider);
+      if (deactivateError) throw deactivateError;
     }
 
     const update: { is_active: boolean; default_model?: string } = { is_active: isActive };
@@ -216,6 +235,14 @@ export async function PUT(request: NextRequest) {
     } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
+    const limit = rateLimit(`key-test:${user.id}`, 10, 60_000);
+    if (!limit.ok) {
+      return NextResponse.json(
+        { error: "Muitos testes de chave. Aguarde um minuto." },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+      );
+    }
+
     const body = await request.json().catch(() => null);
     const parsed = testSchema.safeParse(body);
     if (!parsed.success) {
@@ -230,6 +257,7 @@ export async function PUT(request: NextRequest) {
     try {
       if (provider === "anthropic") {
         const res = await fetch("https://api.anthropic.com/v1/models", {
+          signal: AbortSignal.timeout(10_000),
           headers: {
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
@@ -239,20 +267,23 @@ export async function PUT(request: NextRequest) {
         detail = ok ? "Conectado" : `HTTP ${res.status}`;
       } else if (provider === "openai") {
         const res = await fetch("https://api.openai.com/v1/models", {
+          signal: AbortSignal.timeout(10_000),
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         ok = res.ok;
         detail = ok ? "Conectado" : `HTTP ${res.status}`;
       } else {
         // Google: valida chamando a listagem de modelos generativelanguage
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
-        );
+        // Header em vez de query string: a chave não vaza em logs de URL
+        const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+          signal: AbortSignal.timeout(10_000),
+          headers: { "x-goog-api-key": apiKey },
+        });
         ok = res.ok;
         detail = ok ? "Conectado" : `HTTP ${res.status}`;
       }
-    } catch (err) {
-      detail = err instanceof Error ? err.message : "Falha de rede";
+    } catch {
+      detail = "Falha de rede ao contatar o provedor";
     }
 
     return NextResponse.json({ ok, detail });

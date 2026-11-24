@@ -4,13 +4,9 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Task, TaskStatus, TaskPriority, TaskType } from "@/types/domain";
 import {
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  Filter,
   Columns,
   ExternalLink,
   ArrowUp,
@@ -126,10 +122,21 @@ export function BacklogTableView({
                   )}
                   onClick={(e) => col.key !== "select" && col.key !== "actions" && handleSortClick(col.key, e)}
                 >
+                  {col.key === "select" ? (
+                    <input
+                      type="checkbox"
+                      aria-label="Selecionar todas"
+                      checked={tasks.length > 0 && selectedTaskIds.length === tasks.length}
+                      onChange={(e) => onSelectAll(e.target.checked)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-4 w-4 rounded border-border"
+                    />
+                  ) : (
                   <div className="flex items-center gap-1">
                     {col.label}
                     {col.key !== "select" && col.key !== "actions" && getSortIcon(col.key)}
                   </div>
+                  )}
                 </th>
               ))}
             </tr>
@@ -251,7 +258,7 @@ export function BacklogTableView({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
-                          onClick={(e) => { e.stopPropagation(); onOpenDrawer(task.id); }}
+                          onClick={(e) => { e.stopPropagation(); onViewOnCanvas(task); }}
                           className="flex items-center gap-2"
                         >
                           <ExternalLink className="h-4 w-4" />

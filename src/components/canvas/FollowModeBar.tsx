@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { User, Users, MousePointer2, X, Eye, EyeOff } from "lucide-react";
+import { User, MousePointer2, X, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";

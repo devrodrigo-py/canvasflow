@@ -9,6 +9,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { cn } from "@/lib/utils";
+import { htmlToMarkdown, isEmptySpecJson, markdownToHtml } from "@/lib/spec-format";
 
 const lowlight = createLowlight(common);
 
@@ -46,20 +47,49 @@ function ToolbarButton({
   );
 }
 
+export interface SpecChange {
+  spec_json: Record<string, unknown>;
+  spec_markdown: string;
+}
+
 interface TaskSpecEditorProps {
-  content: string;
-  onChange: (content: string) => void;
+  /** Documento TipTap (canônico). Vazio → o editor carrega a partir do Markdown. */
+  specJson: unknown;
+  /** Markdown derivado (ou escrito pela IA/agentes). */
+  specMarkdown: string;
+  onChange: (change: SpecChange) => void | Promise<void>;
   editable?: boolean;
   placeholder?: string;
+  /** Atraso do salvamento automático (evita uma escrita por tecla). */
+  debounceMs?: number;
+}
+
+function initialContent(specJson: unknown, specMarkdown: string) {
+  return isEmptySpecJson(specJson) ? markdownToHtml(specMarkdown) : (specJson as Record<string, unknown>);
 }
 
 export function TaskSpecEditor({
-  content,
+  specJson,
+  specMarkdown,
   onChange,
   editable = true,
   placeholder = "Escreva a especificação da tarefa...",
+  debounceMs = 800,
 }: TaskSpecEditorProps) {
-  const [htmlContent, setHtmlContent] = React.useState(content);
+  const onChangeRef = React.useRef(onChange);
+  onChangeRef.current = onChange;
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = React.useRef<SpecChange | null>(null);
+  // Último markdown que este editor emitiu: distingue eco do próprio save de mudança externa
+  const lastEmittedMarkdown = React.useRef<string>(specMarkdown);
+
+  const flush = React.useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    const change = pending.current;
+    pending.current = null;
+    if (change) void onChangeRef.current(change);
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -77,19 +107,38 @@ export function TaskSpecEditor({
         lowlight,
       }),
     ],
-    content: htmlContent,
+    content: initialContent(specJson, specMarkdown),
     editable,
+    immediatelyRender: false,
     onUpdate: ({ editor }) => {
-      const newContent = editor.getHTML();
-      setHtmlContent(newContent);
-      onChange(newContent);
+      const markdown = htmlToMarkdown(editor.getHTML());
+      lastEmittedMarkdown.current = markdown;
+      pending.current = { spec_json: editor.getJSON() as Record<string, unknown>, spec_markdown: markdown };
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(flush, debounceMs);
     },
+    onBlur: () => flush(),
     editorProps: {
       attributes: {
         class: "prose prose-sm max-w-none focus:outline-none min-h-[300px] p-4",
       },
     },
   });
+
+  // Salva o que estiver pendente ao fechar o drawer / trocar de tarefa
+  React.useEffect(() => flush, [flush]);
+
+  // Mudanças externas (IA gerou spec, outro usuário editou) atualizam o editor
+  React.useEffect(() => {
+    if (!editor || editor.isFocused) return;
+    if (specMarkdown === lastEmittedMarkdown.current) return;
+    lastEmittedMarkdown.current = specMarkdown;
+    editor.commands.setContent(initialContent(specJson, specMarkdown), false);
+  }, [editor, specJson, specMarkdown]);
+
+  React.useEffect(() => {
+    editor?.setEditable(editable);
+  }, [editor, editable]);
 
   if (!editor) {
     return (

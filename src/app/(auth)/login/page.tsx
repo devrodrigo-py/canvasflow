@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Github, Mail, Loader2 } from "lucide-react";
+import { safeRedirectPath } from "@/lib/utils";
+
+const AUTH_ERRORS: Record<string, string> = {
+  auth_failed: "Não foi possível concluir a autenticação. Tente novamente.",
+};
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -15,6 +20,18 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
+  const [info, setInfo] = useState("");
+  const [next, setNext] = useState("/");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setNext(safeRedirectPath(params.get("next")));
+    const code = params.get("error");
+    if (code) setError(AUTH_ERRORS[code] ?? "Erro de autenticação");
+  }, []);
+
+  const callbackUrl = (target: string) =>
+    `${window.location.origin}/auth/callback?next=${encodeURIComponent(target)}`;
 
   // Cliente criado sob demanda: evita instanciar Supabase durante o prerender do build
   const getSupabase = () => createClient();
@@ -23,6 +40,7 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    setInfo("");
     const supabase = getSupabase();
 
     try {
@@ -31,16 +49,16 @@ export default function LoginPage() {
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            emailRedirectTo: callbackUrl(next),
           },
         });
         if (error) throw error;
         if (data.session) {
           // Autoconfirm ativo: signup já autentica
-          window.location.href = "/";
+          window.location.href = next;
           return;
         }
-        setError("Verifique seu email para confirmar a conta.");
+        setInfo("Verifique seu email para confirmar a conta.");
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -48,7 +66,7 @@ export default function LoginPage() {
         });
         if (error) throw error;
         // A raiz "/" resolve o workspace e projeto reais do usuário e redireciona
-        window.location.href = "/";
+        window.location.href = next;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao autenticar");
@@ -57,13 +75,28 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError("Informe seu email para recuperar a senha.");
+      return;
+    }
+    setIsLoading(true);
+    setError("");
+    const { error } = await getSupabase().auth.resetPasswordForEmail(email, {
+      redirectTo: callbackUrl("/auth/update-password"),
+    });
+    setIsLoading(false);
+    if (error) setError(error.message);
+    else setInfo("Se o email existir, enviamos um link para redefinir a senha.");
+  };
+
   const handleOAuth = async (provider: "github" | "google") => {
     setIsLoading(true);
     const supabase = getSupabase();
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: callbackUrl(next),
       },
     });
     if (error) {
@@ -87,6 +120,11 @@ export default function LoginPage() {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+          {info && (
+            <Alert>
+              <AlertDescription>{info}</AlertDescription>
+            </Alert>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
@@ -102,7 +140,19 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Senha</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Senha</Label>
+                {!isSignUp && (
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-xs text-primary hover:underline"
+                    disabled={isLoading}
+                  >
+                    Esqueci a senha
+                  </button>
+                )}
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -110,6 +160,8 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                minLength={8}
+                autoComplete={isSignUp ? "new-password" : "current-password"}
                 disabled={isLoading}
               />
             </div>

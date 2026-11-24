@@ -4,7 +4,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Task, TaskStatus } from "@/types/domain";
 import { Plus, GripVertical, ExternalLink, Columns, MoreHorizontal } from "lucide-react";
 import {

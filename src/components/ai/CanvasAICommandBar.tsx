@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Sparkles, Loader2, Zap, GitBranch, Boxes, Wand2, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+
 import { Button } from "@/components/ui/button";
 import { CanvasNodeType } from "@/types/domain";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";

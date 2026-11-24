@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Sparkles, FileCode, Clock, Github, ExternalLink, AlertCircle, CheckCircle, XCircle, Code, Database, Terminal } from "lucide-react";
+import { Sparkles, FileCode, Github, ExternalLink, AlertCircle, CheckCircle, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";

@@ -52,7 +52,7 @@ export function createMCPServer(context: MCPContext): McpServer {
     "get_backlog_tasks",
     {
       description:
-        "Retorna lista paginada de tarefas do backlog com task_key, title, status, priority, type e parent_task_key.",
+        "Retorna uma página de tarefas do backlog (limit/offset, ordem de criação) com task_key, title, status, priority, type e parent_task_key, além de total e has_more.",
       inputSchema: getBacklogTasksInput.shape,
     },
     async (args) => handleGetBacklogTasks(context, getBacklogTasksInput.parse(args))
@@ -63,7 +63,7 @@ export function createMCPServer(context: MCPContext): McpServer {
     {
       description:
         "Retorna o contexto completo de uma tarefa: spec_markdown, acceptance_criteria, agent_execution_log, " +
-        "comentários abertos e tarefas conectadas no canvas (blocks, blocked_by, children).",
+        "comentários abertos e tarefas conectadas (parent, children, blocks, blocked_by, related).",
       inputSchema: getTaskContextInput.shape,
     },
     async (args) => handleGetTaskContext(context, getTaskContextInput.parse(args))

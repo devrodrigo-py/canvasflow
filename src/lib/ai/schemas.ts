@@ -185,4 +185,6 @@ export const mcpTokenRequestSchema = z.object({
     .array(z.enum(["tasks:read", "tasks:write", "canvas:write"]))
     .default(["tasks:read", "tasks:write", "canvas:write"]),
   allow_direct_done: z.boolean().default(false),
+  /** Validade em dias; null = sem expiração (desencorajado). */
+  expires_in_days: z.union([z.literal(30), z.literal(90), z.literal(365), z.null()]).default(90),
 });

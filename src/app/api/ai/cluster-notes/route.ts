@@ -1,27 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateObject } from "ai";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/database";
-import { createClient } from "@/lib/supabase/server";
-import { getWorkspaceModel, AIKeyNotFoundError } from "@/lib/ai/provider";
+import { getWorkspaceModel } from "@/lib/ai/provider";
 import { clusterNotesSchema, clusterNotesRequestSchema } from "@/lib/ai/schemas";
 import { logActivity } from "@/lib/services/tasks.service";
 import { createNode } from "@/lib/services/canvas.service";
+import { requireAIUser, aiErrorResponse } from "@/lib/ai/route-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-type Db = SupabaseClient<Database>;
-
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-    }
+    const auth = await requireAIUser();
+    if (!auth.ok) return auth.response;
+    const { supabase, user } = auth;
 
     const body = await request.json().catch(() => null);
     const parsed = clusterNotesRequestSchema.safeParse(body);
@@ -67,11 +59,12 @@ export async function POST(request: NextRequest) {
       .map((n) => `- id=${n.id} :: ${((n.data as Record<string, unknown>)?.text as string) ?? "(vazio)"}`)
       .join("\n");
 
-    const { model } = await getWorkspaceModel(supabase as unknown as Db, workspaceId);
+    const { model } = await getWorkspaceModel(workspaceId, user.id);
 
     const { object } = await generateObject({
       model,
       schema: clusterNotesSchema,
+      abortSignal: AbortSignal.timeout(55_000),
       prompt: `Você é facilitador de workshops de produto. Agrupe os post-its abaixo em grupos temáticos coerentes (1 a 8 grupos). Cada post-it pertence a exatamente um grupo e todos os post-its informados devem ser alocados.
 
 Post-its:
@@ -82,7 +75,7 @@ ${notesContext}`,
     const framesCreated: Array<{ id: string; title: string }> = [];
     let offsetY = 0;
     for (const group of object.groups) {
-      const frame = await createNode(supabase as unknown as Db, {
+      const frame = await createNode(supabase, {
         canvasId,
         nodeType: "frame",
         position: { x: 0, y: offsetY },
@@ -94,16 +87,19 @@ ${notesContext}`,
       offsetY += (frame.height ?? 300) + 60;
 
       // Post-its do grupo: dentro do frame e com needs_auto_layout para o efeito reativo posicioná-los
-      for (const noteId of group.note_ids) {
-        await supabase
+      // Apenas ids que estavam na seleção (a IA pode alucinar ids)
+      const groupIds = group.note_ids.filter((id) => stickyNoteIds.includes(id));
+      if (groupIds.length > 0) {
+        const { error: moveError } = await supabase
           .from("canvas_nodes")
           .update({ parent_frame_id: frame.id, needs_auto_layout: true })
-          .eq("id", noteId)
+          .in("id", groupIds)
           .eq("canvas_id", canvasId);
+        if (moveError) throw moveError;
       }
     }
 
-    await logActivity(supabase as unknown as Db, {
+    await logActivity(supabase, {
       workspaceId,
       projectId: canvas.project_id,
       taskId: null,
@@ -120,10 +116,6 @@ ${notesContext}`,
       message: `${object.groups.length} frames criados e ${stickyNoteIds.length} post-its organizados.`,
     });
   } catch (error) {
-    if (error instanceof AIKeyNotFoundError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    console.error("cluster-notes:", error);
-    return NextResponse.json({ error: "Erro interno ao agrupar post-its" }, { status: 500 });
+    return aiErrorResponse(error, "cluster-notes", "Erro interno ao agrupar post-its");
   }
 }

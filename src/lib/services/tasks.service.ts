@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/database";
-import {
+import type { Database, Json } from "@/types/database";
+import type {
   Task,
   TaskStatus,
   TaskPriority,
@@ -10,9 +10,11 @@ import {
   CanvasEdgeType,
   AgentExecutionLogEntry,
   Comment,
+  ActorType,
 } from "@/types/domain";
 
 type DbClient = SupabaseClient<Database>;
+type TaskRow = Database["public"]["Tables"]["tasks"]["Row"];
 
 export class TaskNotFoundError extends Error {
   constructor(taskKey: string) {
@@ -28,14 +30,7 @@ export class ProjectNotFoundError extends Error {
   }
 }
 
-export class InsufficientScopeError extends Error {
-  constructor(scope: string) {
-    super(`Token is missing required scope: ${scope}`);
-    this.name = "InsufficientScopeError";
-  }
-}
-
-function rowToTask(row: Database["public"]["Tables"]["tasks"]["Row"]): Task {
+export function rowToTask(row: TaskRow): Task {
   return {
     id: row.id,
     project_id: row.project_id,
@@ -59,9 +54,9 @@ function rowToTask(row: Database["public"]["Tables"]["tasks"]["Row"]): Task {
   };
 }
 
-export function toTask(row: Database["public"]["Tables"]["tasks"]["Row"]): Task {
-  return rowToTask(row);
-}
+// ---------------------------------------------------------------------------
+// Projetos
+// ---------------------------------------------------------------------------
 
 export async function getProjectBySlug(
   db: DbClient,
@@ -69,16 +64,8 @@ export async function getProjectBySlug(
   projectSlug: string,
   projectIdConstraint: string | null
 ) {
-  let query = db
-    .from("projects")
-    .select("*")
-    .eq("workspace_id", workspaceId)
-    .eq("slug", projectSlug)
-    .limit(1);
-
-  if (projectIdConstraint) {
-    query = query.eq("id", projectIdConstraint);
-  }
+  let query = db.from("projects").select("*").eq("workspace_id", workspaceId).eq("slug", projectSlug);
+  if (projectIdConstraint) query = query.eq("id", projectIdConstraint);
 
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
@@ -98,95 +85,104 @@ export async function getDefaultCanvasId(db: DbClient, projectId: string): Promi
     .select("id")
     .eq("project_id", projectId)
     .eq("is_default", true)
+    .limit(1)
     .maybeSingle();
   if (error) throw error;
   return data?.id ?? null;
 }
 
-export async function listProjects(
-  db: DbClient,
-  workspaceId: string,
-  projectIdConstraint: string | null
-) {
-  let query = db.from("projects").select("*").eq("workspace_id", workspaceId).order("created_at");
-  if (projectIdConstraint) {
-    query = query.eq("id", projectIdConstraint);
-  }
+/** Projetos acessíveis + canvas padrão numa única query (sem N+1). */
+export async function listProjects(db: DbClient, workspaceId: string, projectIdConstraint: string | null) {
+  let query = db
+    .from("projects")
+    .select("id, slug, name, key_prefix, canvases(id, is_default)")
+    .eq("workspace_id", workspaceId)
+    .order("created_at");
+  if (projectIdConstraint) query = query.eq("id", projectIdConstraint);
+
   const { data, error } = await query;
   if (error) throw error;
 
-  const projects = await Promise.all(
-    (data ?? []).map(async (project) => ({
+  return (data ?? []).map((project) => {
+    const canvases = (project.canvases as unknown as Array<{ id: string; is_default: boolean }>) ?? [];
+    return {
       id: project.id,
       slug: project.slug,
       name: project.name,
       key_prefix: project.key_prefix,
-      default_canvas_id: await getDefaultCanvasId(db, project.id),
-    }))
-  );
-
-  return projects;
+      default_canvas_id: canvases.find((c) => c.is_default)?.id ?? null,
+    };
+  });
 }
+
+// ---------------------------------------------------------------------------
+// Tarefas
+// ---------------------------------------------------------------------------
 
 export interface BacklogFilters {
   status?: TaskStatus[];
   priority?: TaskPriority[];
   type?: TaskType[];
   limit?: number;
+  offset?: number;
 }
 
-export async function getBacklogTasks(
-  db: DbClient,
-  projectId: string,
-  filters: BacklogFilters
-): Promise<
-  Array<{
-    task_key: string;
-    title: string;
-    status: TaskStatus;
-    priority: TaskPriority;
-    type: TaskType;
-    parent_task_key: string | null;
-  }>
-> {
+export async function getBacklogTasks(db: DbClient, projectId: string, filters: BacklogFilters) {
+  const limit = Math.min(filters.limit ?? 100, 200);
+  const offset = Math.max(filters.offset ?? 0, 0);
+
+  // created_at segue a ordem do contador (APP-2 antes de APP-10), ao contrário de ordenar o texto
   let query = db
     .from("tasks")
-    .select("task_key, title, status, priority, type, parent_task_id, parent_task:tasks!parent_task_id(task_key)")
+    .select("task_key, title, status, priority, type, parent_task:tasks!parent_task_id(task_key)", { count: "exact" })
     .eq("project_id", projectId)
-    .order("task_key", { ascending: true });
+    .order("created_at", { ascending: true })
+    .range(offset, offset + limit - 1);
 
   if (filters.status?.length) query = query.in("status", filters.status);
   if (filters.priority?.length) query = query.in("priority", filters.priority);
   if (filters.type?.length) query = query.in("type", filters.type);
 
-  query = query.limit(Math.min(filters.limit ?? 100, 200));
-
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw error;
 
-  return (data ?? []).map((row) => {
+  const tasks = (data ?? []).map((row) => {
     const parent = row.parent_task as unknown as { task_key: string } | null;
     return {
       task_key: row.task_key,
       title: row.title,
-      status: row.status,
-      priority: row.priority,
-      type: row.type,
+      status: row.status as TaskStatus,
+      priority: row.priority as TaskPriority,
+      type: row.type as TaskType,
       parent_task_key: parent?.task_key ?? null,
     };
   });
+
+  return { tasks, total: count ?? tasks.length, offset, limit };
 }
 
-export async function getTaskByKey(db: DbClient, projectId: string, taskKey: string): Promise<Task> {
-  const { data, error } = await db
+/**
+ * Resolve uma task_key dentro do escopo do token (workspace + projeto opcional)
+ * numa única query. task_key é única por workspace (prefixo único por workspace).
+ */
+export async function getTaskByKeyInScope(
+  db: DbClient,
+  workspaceId: string,
+  projectIdConstraint: string | null,
+  taskKey: string
+): Promise<Task> {
+  let query = db
     .from("tasks")
-    .select("*")
-    .eq("project_id", projectId)
+    .select("*, project:projects!inner(workspace_id)")
     .eq("task_key", taskKey)
-    .maybeSingle();
+    .eq("project.workspace_id", workspaceId);
+  if (projectIdConstraint) query = query.eq("project_id", projectIdConstraint);
+
+  const { data, error } = await query.maybeSingle();
   if (error) throw error;
   if (!data) throw new TaskNotFoundError(taskKey);
-  return rowToTask(data);
+  const { project: _project, ...row } = data as TaskRow & { project: unknown };
+  return rowToTask(row);
 }
 
 export async function getTaskById(db: DbClient, taskId: string): Promise<Task | null> {
@@ -195,69 +191,79 @@ export async function getTaskById(db: DbClient, taskId: string): Promise<Task | 
   return data ? rowToTask(data) : null;
 }
 
-export async function getTaskContext(db: DbClient, projectId: string, taskKey: string) {
-  const task = await getTaskByKey(db, projectId, taskKey);
+type TaskSummary = Pick<Task, "id" | "task_key" | "title" | "status" | "priority" | "type">;
 
-  // Tarefas conectadas via arestas do canvas (blocks / blocked_by / children)
-  const { data: node, error: nodeError } = await db
-    .from("canvas_nodes")
-    .select("id")
-    .eq("task_id", task.id)
-    .limit(1)
-    .maybeSingle();
-  if (nodeError) throw nodeError;
+export interface TaskContext {
+  task: Task;
+  connected_tasks: {
+    parent: TaskSummary | null;
+    children: TaskSummary[];
+    blocks: TaskSummary[];
+    blocked_by: TaskSummary[];
+    related: TaskSummary[];
+  };
+  comments: Comment[];
+}
 
-  const blocks: Task[] = [];
-  const blocked_by: Task[] = [];
-  const children: Task[] = [];
+const SUMMARY_COLUMNS = "id, task_key, title, status, priority, type";
 
-  if (node) {
-    const { data: edges, error: edgesError } = await db
-      .from("canvas_edges")
-      .select(
-        "edge_type, source:canvas_nodes!canvas_edges_source_node_id_fkey(id, task:tasks(id, task_key, title, status, priority, type)), target:canvas_nodes!canvas_edges_target_node_id_fkey(id, task:tasks(id, task_key, title, status, priority, type))"
-      )
-      .or(`source_node_id.eq.${node.id},target_node_id.eq.${node.id}`);
-    if (edgesError) throw edgesError;
+/** Contexto completo a partir de task_dependencies (fonte da verdade), não do canvas. */
+export async function getTaskContext(db: DbClient, task: Task): Promise<TaskContext> {
+  const [outgoing, incoming, logicalChildren, parent, comments] = await Promise.all([
+    db
+      .from("task_dependencies")
+      .select(`dependency_type, target:tasks!task_dependencies_target_task_id_fkey(${SUMMARY_COLUMNS})`)
+      .eq("source_task_id", task.id),
+    db
+      .from("task_dependencies")
+      .select(`dependency_type, source:tasks!task_dependencies_source_task_id_fkey(${SUMMARY_COLUMNS})`)
+      .eq("target_task_id", task.id),
+    db.from("tasks").select(SUMMARY_COLUMNS).eq("parent_task_id", task.id),
+    task.parent_task_id
+      ? db.from("tasks").select(SUMMARY_COLUMNS).eq("id", task.parent_task_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    db.from("comments").select("*").eq("task_id", task.id).eq("resolved", false).order("created_at"),
+  ]);
 
-    for (const edge of edges ?? []) {
-      const sourceTask = edge.source?.task;
-      const targetTask = edge.target?.task;
-      if (!sourceTask || !targetTask) continue;
-
-      if (edge.edge_type === "blocks") {
-        if (edge.source.id === node.id) blocks.push(rowToTask(targetTask as never));
-        else blocked_by.push(rowToTask(sourceTask as never));
-      } else if (edge.edge_type === "parent_of") {
-        if (edge.source.id === node.id) children.push(rowToTask(targetTask as never));
-        else children.push(rowToTask(sourceTask as never));
-      }
-    }
+  for (const res of [outgoing, incoming, logicalChildren, parent, comments]) {
+    if (res.error) throw res.error;
   }
 
-  // Filhos também via parent_task_id (relação lógica além do canvas)
-  const { data: logicalChildren, error: childrenError } = await db
-    .from("tasks")
-    .select("*")
-    .eq("parent_task_id", task.id);
-  if (childrenError) throw childrenError;
-  for (const child of logicalChildren ?? []) {
-    if (!children.some((c) => c.id === child.id)) children.push(rowToTask(child));
-  }
+  const blocks: TaskSummary[] = [];
+  const blockedBy: TaskSummary[] = [];
+  const children: TaskSummary[] = [];
+  const related: TaskSummary[] = [];
+  let parentTask = (parent.data as TaskSummary | null) ?? null;
 
-  // Comentários abertos
-  const { data: comments, error: commentsError } = await db
-    .from("comments")
-    .select("*")
-    .eq("task_id", task.id)
-    .eq("resolved", false)
-    .order("created_at", { ascending: true });
-  if (commentsError) throw commentsError;
+  for (const dep of outgoing.data ?? []) {
+    const target = dep.target as unknown as TaskSummary | null;
+    if (!target) continue;
+    if (dep.dependency_type === "blocks") blocks.push(target);
+    else if (dep.dependency_type === "parent_of") children.push(target);
+    else related.push(target);
+  }
+  for (const dep of incoming.data ?? []) {
+    const source = dep.source as unknown as TaskSummary | null;
+    if (!source) continue;
+    if (dep.dependency_type === "blocks") blockedBy.push(source);
+    // Quem aponta parent_of para esta tarefa é o PAI, não um filho
+    else if (dep.dependency_type === "parent_of") parentTask = parentTask ?? source;
+    else related.push(source);
+  }
+  for (const child of (logicalChildren.data as TaskSummary[] | null) ?? []) {
+    if (!children.some((c) => c.id === child.id)) children.push(child);
+  }
 
   return {
     task,
-    connected_tasks: { blocks, blocked_by, children },
-    comments: (comments ?? []) as Comment[],
+    connected_tasks: {
+      parent: parentTask,
+      children,
+      blocks,
+      blocked_by: blockedBy,
+      related: related.filter((t, i, arr) => arr.findIndex((x) => x.id === t.id) === i),
+    },
+    comments: (comments.data ?? []) as Comment[],
   };
 }
 
@@ -267,7 +273,7 @@ export async function logActivity(
     workspaceId: string;
     projectId: string | null;
     taskId: string | null;
-    actorType: "human" | "internal_ai" | "external_agent";
+    actorType: ActorType;
     actorUserId: string | null;
     actorLabel: string;
     action: string;
@@ -282,10 +288,14 @@ export async function logActivity(
     actor_user_id: params.actorUserId,
     actor_label: params.actorLabel,
     action: params.action,
-    payload: (params.payload ?? {}) as Database["public"]["Tables"]["activity_logs"]["Insert"]["payload"],
+    payload: (params.payload ?? {}) as Json,
   });
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------------
+// Escritas de agentes externos (RPCs atômicas; guardrail aplicado no banco)
+// ---------------------------------------------------------------------------
 
 export interface UpdateTaskStatusResult {
   task_key: string;
@@ -295,16 +305,10 @@ export interface UpdateTaskStatusResult {
   message: string;
 }
 
-/**
- * Atualiza o status de uma tarefa aplicando o guardrail human-in-the-loop:
- * se o agente externo tentar mover para `done` sem `allowDirectDone`, redireciona para `in_review`.
- */
 export async function updateTaskStatusWithGuardrail(
   db: DbClient,
   params: {
-    projectId: string;
-    workspaceId: string;
-    taskKey: string;
+    task: Task;
     status: TaskStatus;
     summary: string;
     filesChanged?: string[];
@@ -313,24 +317,9 @@ export async function updateTaskStatusWithGuardrail(
     allowDirectDone: boolean;
   }
 ): Promise<UpdateTaskStatusResult> {
-  const task = await getTaskByKey(db, params.projectId, params.taskKey);
-
-  let finalStatus: TaskStatus = params.status;
-  let guardrailApplied = false;
-  let message = `Status atualizado para ${finalStatus}.`;
-
-  if (params.status === "done" && !params.allowDirectDone) {
-    finalStatus = "in_review";
-    guardrailApplied = true;
-    message =
-      `Guardrail human-in-the-loop aplicado: status solicitado "done" foi redirecionado para "in_review". ` +
-      `Aprovação humana é necessária para concluir a tarefa ${task.task_key}.`;
-  }
-
-  const now = new Date().toISOString();
-  const logEntry: AgentExecutionLogEntry = {
+  const entry: AgentExecutionLogEntry = {
     id: crypto.randomUUID(),
-    timestamp: now,
+    timestamp: new Date().toISOString(),
     actor: params.actorLabel,
     actor_type: "external_agent",
     summary: params.summary,
@@ -339,50 +328,26 @@ export async function updateTaskStatusWithGuardrail(
     commit_or_pr_url: params.commitOrPrUrl,
   };
 
-  const { error } = await db
-    .from("tasks")
-    .update({
-      status: finalStatus,
-      agent_execution_log: [
-        ...task.agent_execution_log,
-        logEntry,
-      ] as unknown as Database["public"]["Tables"]["tasks"]["Update"]["agent_execution_log"],
-      last_updated_by_type: "external_agent",
-      last_updated_by_label: params.actorLabel,
-    })
-    .eq("id", task.id);
+  const { data, error } = await db.rpc("agent_update_task_status", {
+    p_task_id: params.task.id,
+    p_status: params.status,
+    p_entry: entry as unknown as Json,
+    p_actor_label: params.actorLabel,
+    p_allow_direct_done: params.allowDirectDone,
+  });
   if (error) throw error;
 
-  await logActivity(db, {
-    workspaceId: params.workspaceId,
-    projectId: params.projectId,
-    taskId: task.id,
-    actorType: "external_agent",
-    actorUserId: null,
-    actorLabel: params.actorLabel,
-    action: "task.status_changed",
-    payload: {
-      from: task.status,
-      to: finalStatus,
-      requested_status: params.status,
-      guardrail_applied: guardrailApplied,
-      summary: params.summary,
-      commit_or_pr_url: params.commitOrPrUrl,
-    },
-  });
+  const result = data as unknown as Omit<UpdateTaskStatusResult, "message">;
+  const message = result.guardrail_applied
+    ? `Guardrail human-in-the-loop aplicado: status solicitado "done" foi redirecionado para "in_review". ` +
+      `Aprovação humana é necessária para concluir a tarefa ${result.task_key}.`
+    : `Status atualizado para ${result.new_status}.`;
 
-  return {
-    task_key: task.task_key,
-    previous_status: task.status,
-    new_status: finalStatus,
-    guardrail_applied: guardrailApplied,
-    message,
-  };
+  return { ...result, message };
 }
 
 export interface CreateLinkedTaskInput {
   projectId: string;
-  workspaceId: string;
   title: string;
   type: TaskType;
   priority?: TaskPriority;
@@ -394,120 +359,48 @@ export interface CreateLinkedTaskInput {
 }
 
 /**
- * Cria uma tarefa + projeta um TaskCardNode no canvas padrão com needs_auto_layout = true
- * e conecta ao nó pai (se fornecido) via canvas_edges.
+ * Cria tarefa + card (needs_auto_layout) + dependência com o pai numa única
+ * transação. O pai e o canvas são validados antes de qualquer escrita.
  */
 export async function createLinkedTask(
   db: DbClient,
   input: CreateLinkedTaskInput
 ): Promise<{ task_key: string; canvas_node_id: string; task_id: string }> {
-  const { data: task, error: taskError } = await db
-    .from("tasks")
-    .insert({
-      project_id: input.projectId,
-      title: input.title,
-      type: input.type,
-      priority: input.priority ?? "medium",
-      spec_markdown: input.specMarkdown ?? "",
-      acceptance_criteria: (input.acceptanceCriteria ?? []).map((text, i) => ({
-        id: `${Date.now()}-${i}`,
-        text,
-        completed: false,
-      })),
-      last_updated_by_type: "external_agent",
-      last_updated_by_label: input.actorLabel,
-    })
-    .select("*")
-    .single();
-  if (taskError) throw taskError;
-
-  let parentTask: Task | null = null;
-  if (input.parentTaskKey) {
-    parentTask = await getTaskByKey(db, input.projectId, input.parentTaskKey);
-
-    // Herda parent_task_id lógico quando o edge é de hierarquia
-    if (input.edgeType === "parent_of" && !task.parent_task_id) {
-      await db.from("tasks").update({ parent_task_id: parentTask.id }).eq("id", task.id);
-    }
-  }
-
-  const canvasId = await getDefaultCanvasId(db, input.projectId);
-  if (!canvasId) {
-    throw new Error(`No default canvas found for project ${input.projectId}`);
-  }
-
-  const { data: node, error: nodeError } = await db
-    .from("canvas_nodes")
-    .insert({
-      canvas_id: canvasId,
-      node_type: "task_card",
-      task_id: task.id,
-      needs_auto_layout: true,
-      data: {
-        title: task.title,
-      },
-    })
-    .select("id")
-    .single();
-  if (nodeError) throw nodeError;
-
-  if (parentTask) {
-    const { data: parentNode, error: parentLookupError } = await db
-      .from("canvas_nodes")
-      .select("id")
-      .eq("task_id", parentTask.id)
-      .eq("canvas_id", canvasId)
-      .limit(1)
-      .maybeSingle();
-    if (parentLookupError) throw parentLookupError;
-
-    if (parentNode) {
-      const edgeType = input.edgeType ?? "parent_of";
-      const { error: edgeError } = await db.from("canvas_edges").insert({
-        canvas_id: canvasId,
-        source_node_id: parentNode.id,
-        target_node_id: node.id,
-        edge_type: edgeType,
-      });
-      // Ignora conflito de duplicidade para manter a operação idempotente
-      if (edgeError && edgeError.code !== "23505") throw edgeError;
-    }
-  }
-
-  await logActivity(db, {
-    workspaceId: input.workspaceId,
-    projectId: input.projectId,
-    taskId: task.id,
-    actorType: "external_agent",
-    actorUserId: null,
-    actorLabel: input.actorLabel,
-    action: "task.created",
-    payload: {
-      title: input.title,
-      type: input.type,
-      parent_task_key: input.parentTaskKey,
-      canvas_node_id: node.id,
-    },
+  const { data, error } = await db.rpc("agent_create_linked_task", {
+    p_project_id: input.projectId,
+    p_title: input.title,
+    p_type: input.type,
+    p_actor_label: input.actorLabel,
+    p_priority: input.priority ?? "medium",
+    p_spec_markdown: input.specMarkdown ?? "",
+    p_acceptance_criteria: (input.acceptanceCriteria ?? []).map((text) => ({
+      id: crypto.randomUUID(),
+      text,
+      completed: false,
+    })) as unknown as Json,
+    p_parent_task_key: input.parentTaskKey ?? null,
+    p_edge_type: input.parentTaskKey ? (input.edgeType ?? "parent_of") : null,
   });
-
-  return { task_key: task.task_key, canvas_node_id: node.id, task_id: task.id };
+  if (error) {
+    if (error.message.includes("não encontrada") && input.parentTaskKey) {
+      throw new TaskNotFoundError(input.parentTaskKey);
+    }
+    throw error;
+  }
+  return data as unknown as { task_key: string; canvas_node_id: string; task_id: string };
 }
 
 export async function appendAgentNote(
   db: DbClient,
   params: {
-    projectId: string;
-    workspaceId: string;
-    taskKey: string;
+    task: Task;
     markdown: string;
     filesChanged?: string[];
     category?: "progress" | "architecture" | "blocker" | "test_result";
     actorLabel: string;
   }
 ): Promise<{ task_key: string; log_entries: number }> {
-  const task = await getTaskByKey(db, params.projectId, params.taskKey);
-
-  const logEntry: AgentExecutionLogEntry = {
+  const entry: AgentExecutionLogEntry = {
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     actor: params.actorLabel,
@@ -517,32 +410,18 @@ export async function appendAgentNote(
     category: params.category ?? "progress",
   };
 
-  const { error } = await db
-    .from("tasks")
-    .update({
-      agent_execution_log: [
-        ...task.agent_execution_log,
-        logEntry,
-      ] as unknown as Database["public"]["Tables"]["tasks"]["Update"]["agent_execution_log"],
-      last_updated_by_type: "external_agent",
-      last_updated_by_label: params.actorLabel,
-    })
-    .eq("id", task.id);
-  if (error) throw error;
-
-  await logActivity(db, {
-    workspaceId: params.workspaceId,
-    projectId: params.projectId,
-    taskId: task.id,
-    actorType: "external_agent",
-    actorUserId: null,
-    actorLabel: params.actorLabel,
-    action: "agent.note_appended",
-    payload: { category: logEntry.category, files_changed: params.filesChanged },
+  const { data, error } = await db.rpc("agent_append_note", {
+    p_task_id: params.task.id,
+    p_entry: entry as unknown as Json,
+    p_actor_label: params.actorLabel,
   });
-
-  return { task_key: task.task_key, log_entries: task.agent_execution_log.length + 1 };
+  if (error) throw error;
+  return data as unknown as { task_key: string; log_entries: number };
 }
+
+// ---------------------------------------------------------------------------
+// Visão geral do quadro
+// ---------------------------------------------------------------------------
 
 export interface CanvasOverviewResult {
   frames: Array<{ id: string; title: string; node_count: number }>;
@@ -552,31 +431,31 @@ export interface CanvasOverviewResult {
   total_nodes: number;
 }
 
-export async function getCanvasOverview(
-  db: DbClient,
-  projectId: string
-): Promise<CanvasOverviewResult> {
+export async function getCanvasOverview(db: DbClient, projectId: string): Promise<CanvasOverviewResult> {
   const canvasId = await getDefaultCanvasId(db, projectId);
   if (!canvasId) throw new Error(`No default canvas found for project ${projectId}`);
 
-  const { data: nodes, error: nodesError } = await db
-    .from("canvas_nodes")
-    .select("id, node_type, task_id, data, parent_frame_id")
-    .eq("canvas_id", canvasId);
-  if (nodesError) throw nodesError;
+  const [nodesRes, tasksRes, depsRes] = await Promise.all([
+    db.from("canvas_nodes").select("id, node_type, task_id, data, parent_frame_id").eq("canvas_id", canvasId),
+    db.from("tasks").select("id, status, task_key, title").eq("project_id", projectId),
+    db
+      .from("task_dependencies")
+      .select("source_task_id, target_task_id")
+      .eq("project_id", projectId)
+      .eq("dependency_type", "blocks"),
+  ]);
+  if (nodesRes.error) throw nodesRes.error;
+  if (tasksRes.error) throw tasksRes.error;
+  if (depsRes.error) throw depsRes.error;
 
-  const allNodes = nodes ?? [];
-  const frameNodes = allNodes.filter((n) => n.node_type === "frame");
-
-  const frames = frameNodes.map((frame) => ({
-    id: frame.id,
-    title: (frame.data as Record<string, unknown>)?.title as string | undefined ?? "Frame",
-    node_count: allNodes.filter((n) => n.parent_frame_id === frame.id && n.id !== frame.id).length,
-  }));
-
-  const taskIds = allNodes
-    .filter((n) => n.node_type === "task_card" && n.task_id)
-    .map((n) => n.task_id as string);
+  const allNodes = nodesRes.data ?? [];
+  const frames = allNodes
+    .filter((n) => n.node_type === "frame")
+    .map((frame) => ({
+      id: frame.id,
+      title: ((frame.data as Record<string, unknown>)?.title as string | undefined) ?? "Frame",
+      node_count: allNodes.filter((n) => n.parent_frame_id === frame.id).length,
+    }));
 
   const statusCounts: Record<TaskStatus, number> = {
     backlog: 0,
@@ -586,216 +465,73 @@ export async function getCanvasOverview(
     blocked: 0,
     done: 0,
   };
+  const tasks = tasksRes.data ?? [];
+  const keyById = new Map(tasks.map((t) => [t.id, t.task_key]));
+  for (const t of tasks) statusCounts[t.status] += 1;
 
-  const active_blockers: Array<{ task_key: string; title: string; blocked_by: string[] }> = [];
-
-  if (taskIds.length > 0) {
-    const { data: tasks, error: tasksError } = await db
-      .from("tasks")
-      .select("id, status, task_key, title")
-      .in("id", taskIds);
-    if (tasksError) throw tasksError;
-
-    for (const t of tasks ?? []) {
-      statusCounts[t.status] = (statusCounts[t.status] ?? 0) + 1;
-    }
-
-    // Bloqueadores ativos: tarefas com status blocked + quem as bloqueia
-    const blockedTasks = (tasks ?? []).filter((t) => t.status === "blocked");
-    const nodeByTaskId = new Map(
-      allNodes.filter((n) => n.task_id).map((n) => [n.task_id as string, n.id])
-    );
-
-    const { data: edges, error: edgesError } = await db
-      .from("canvas_edges")
-      .select("source_node_id, target_node_id")
-      .eq("canvas_id", canvasId)
-      .eq("edge_type", "blocks");
-    if (edgesError) throw edgesError;
-
-    const blockedByByKey = new Map<string, string[]>();
-    const nodeIdToTaskKey = new Map<string, string>();
-    for (const t of tasks ?? []) {
-      const nodeId = nodeByTaskId.get(t.id);
-      if (nodeId) nodeIdToTaskKey.set(nodeId, t.task_key);
-    }
-
-    for (const t of blockedTasks) {
-      const targetNodeId = nodeByTaskId.get(t.id);
-      if (!targetNodeId) continue;
-      const blockers = (edges ?? [])
-        .filter((e) => e.target_node_id === targetNodeId)
-        .map((e) => nodeIdToTaskKey.get(e.source_node_id))
-        .filter((k): k is string => Boolean(k));
-      blockedByByKey.set(t.task_key, blockers);
-    }
-
-    for (const t of blockedTasks) {
-      active_blockers.push({
-        task_key: t.task_key,
-        title: t.title,
-        blocked_by: blockedByByKey.get(t.task_key) ?? [],
-      });
-    }
-  }
+  const deps = depsRes.data ?? [];
+  const activeBlockers = tasks
+    .filter((t) => t.status === "blocked")
+    .map((t) => ({
+      task_key: t.task_key,
+      title: t.title,
+      blocked_by: deps
+        .filter((d) => d.target_task_id === t.id)
+        .map((d) => keyById.get(d.source_task_id))
+        .filter((k): k is string => Boolean(k)),
+    }));
 
   return {
     frames,
     status_counts: statusCounts,
-    active_blockers,
+    active_blockers: activeBlockers,
     unpromoted_sticky_notes: allNodes.filter((n) => n.node_type === "sticky_note").length,
     total_nodes: allNodes.length,
   };
 }
 
-export interface CreateTaskInput {
-  projectId: string;
+// ---------------------------------------------------------------------------
+// Escritas da IA interna (com o client do usuário: RLS se aplica)
+// ---------------------------------------------------------------------------
+
+export interface CreateTaskWithNodeInput {
+  canvasId: string;
   title: string;
-  type: TaskType;
+  position: { x: number; y: number };
+  type?: TaskType;
   priority?: TaskPriority;
   status?: TaskStatus;
-  sprint?: string;
-  estimatePoints?: number;
-  assigneeId?: string;
-  parentTaskId?: string;
   specMarkdown?: string;
-  acceptanceCriteria?: Array<{ id: string; text: string; completed: boolean }>;
-  actorType?: "human" | "internal_ai" | "external_agent";
+  acceptanceCriteria?: string[];
+  actorType?: Exclude<ActorType, "external_agent">;
   actorLabel?: string;
+  needsAutoLayout?: boolean;
 }
 
-export async function createTask(db: DbClient, input: CreateTaskInput): Promise<Task> {
-  const { data, error } = await db
-    .from("tasks")
-    .insert({
-      project_id: input.projectId,
-      title: input.title,
-      type: input.type,
-      priority: input.priority ?? "medium",
-      status: input.status ?? "backlog",
-      sprint: input.sprint,
-      estimate_points: input.estimatePoints,
-      assignee_id: input.assigneeId,
-      parent_task_id: input.parentTaskId,
-      spec_markdown: input.specMarkdown ?? "",
-      acceptance_criteria: input.acceptanceCriteria ?? [],
-      last_updated_by_type: input.actorType ?? "human",
-      last_updated_by_label: input.actorLabel,
-    })
-    .select("*")
-    .single();
-  if (error) throw error;
-  return rowToTask(data);
-}
-
-export async function updateTask(
+/** Tarefa + card no canvas numa única transação (sem tarefas órfãs). */
+export async function createTaskWithNode(
   db: DbClient,
-  params: {
-    taskId: string;
-    workspaceId: string;
-    updates: Partial<{
-      title: string;
-      status: TaskStatus;
-      priority: TaskPriority;
-      type: TaskType;
-      sprint: string;
-      estimate_points: number;
-      assignee_id: string | null;
-      parent_task_id: string | null;
-      spec_json: unknown;
-      spec_markdown: string;
-      acceptance_criteria: Array<{ id: string; text: string; completed: boolean }>;
-    }>;
-    actorType?: "human" | "internal_ai" | "external_agent";
-    actorLabel?: string;
-    actorUserId?: string | null;
-  }
-): Promise<Task> {
-  const { data: current, error: fetchError } = await db
-    .from("tasks")
-    .select("*")
-    .eq("id", params.taskId)
-    .single();
-  if (fetchError) throw fetchError;
-
-  const { data, error } = await db
-    .from("tasks")
-    .update({
-      title: params.updates.title,
-      status: params.updates.status,
-      priority: params.updates.priority,
-      type: params.updates.type,
-      sprint: params.updates.sprint,
-      estimate_points: params.updates.estimate_points,
-      assignee_id: params.updates.assignee_id,
-      parent_task_id: params.updates.parent_task_id,
-      spec_json: params.updates.spec_json as Database["public"]["Tables"]["tasks"]["Update"]["spec_json"],
-      spec_markdown: params.updates.spec_markdown,
-      acceptance_criteria:
-        params.updates.acceptance_criteria as Database["public"]["Tables"]["tasks"]["Update"]["acceptance_criteria"],
-      last_updated_by_type: params.actorType ?? "human",
-      last_updated_by_label: params.actorLabel ?? null,
-    })
-    .eq("id", params.taskId)
-    .select("*")
-    .single();
-  if (error) throw error;
-
-  await logActivity(db, {
-    workspaceId: params.workspaceId,
-    projectId: data.project_id,
-    taskId: data.id,
-    actorType: params.actorType ?? "human",
-    actorUserId: params.actorUserId ?? null,
-    actorLabel: params.actorLabel ?? "Você",
-    action: "task.updated",
-    payload: { updates: Object.keys(params.updates) },
+  input: CreateTaskWithNodeInput
+): Promise<{ task: Task; nodeId: string }> {
+  const { data, error } = await db.rpc("create_task_with_node", {
+    p_canvas_id: input.canvasId,
+    p_title: input.title,
+    p_position_x: input.position.x,
+    p_position_y: input.position.y,
+    p_type: input.type ?? "task",
+    p_priority: input.priority ?? "medium",
+    p_status: input.status ?? "backlog",
+    p_spec_markdown: input.specMarkdown ?? "",
+    p_acceptance_criteria: (input.acceptanceCriteria ?? []).map((text) => ({
+      id: crypto.randomUUID(),
+      text,
+      completed: false,
+    })) as unknown as Json,
+    p_actor_type: input.actorType ?? "human",
+    p_actor_label: input.actorLabel ?? null,
+    p_needs_auto_layout: input.needsAutoLayout ?? false,
   });
-
-  return rowToTask(data);
-}
-
-export async function getWorkspaceBySlug(db: DbClient, slug: string) {
-  const { data, error } = await db.from("workspaces").select("*").eq("slug", slug).maybeSingle();
   if (error) throw error;
-  return data;
-}
-
-export async function getFirstWorkspaceForUser(db: DbClient, userId: string) {
-  const { data, error } = await db
-    .from("workspace_members")
-    .select("workspace:workspaces(*)")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  const workspace = data?.workspace;
-  return Array.isArray(workspace) ? (workspace[0] ?? null) : (workspace ?? null);
-}
-
-export async function addComment(
-  db: DbClient,
-  params: {
-    workspaceId: string;
-    taskId: string;
-    authorUserId: string;
-    authorLabel: string;
-    body: string;
-    actorType?: "human" | "internal_ai" | "external_agent";
-  }
-): Promise<Comment> {
-  const { data, error } = await db
-    .from("comments")
-    .insert({
-      workspace_id: params.workspaceId,
-      task_id: params.taskId,
-      actor_type: params.actorType ?? "human",
-      author_user_id: params.authorUserId,
-      author_label: params.authorLabel,
-      body_markdown: params.body,
-    })
-    .select("*")
-    .single();
-  if (error) throw error;
-  return data as Comment;
+  const result = data as unknown as { task: TaskRow; node: { id: string } };
+  return { task: rowToTask(result.task), nodeId: result.node.id };
 }

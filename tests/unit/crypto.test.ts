@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, vi } from "vitest";
-import { encrypt, decrypt, sha256, generateTokenPrefix, generateToken, createKeyPreview } from "@/lib/crypto";
+import { describe, it, expect, vi } from "vitest";
+import { encrypt, decrypt, sha256, generateToken, generateInviteToken, createKeyPreview } from "@/lib/crypto";
 
 // Mock environment variable before importing crypto
 const TEST_ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -88,16 +88,54 @@ describe("crypto", () => {
     });
   });
 
-  describe("generateTokenPrefix", () => {
-    it("should generate prefix with correct format", () => {
-      const prefix = generateTokenPrefix();
-      expect(prefix).toMatch(/^cf_pat_[0-9a-f]{8}$/);
+  describe("chaves versionadas", () => {
+    const OLD_KEY = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+    it("encrypt informa a versão da chave atual", () => {
+      expect(encrypt("x").version).toBe(1);
     });
 
-    it("should generate different prefixes", () => {
-      const prefix1 = generateTokenPrefix();
-      const prefix2 = generateTokenPrefix();
-      expect(prefix1).not.toBe(prefix2);
+    it("decifra dados de uma chave antiga após rotação", () => {
+      vi.stubEnv("APP_ENCRYPTION_KEY", OLD_KEY);
+      const old = encrypt("segredo-antigo");
+
+      vi.stubEnv("APP_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+      vi.stubEnv("APP_ENCRYPTION_KEY_VERSION", "2");
+      vi.stubEnv("APP_ENCRYPTION_KEY_V1", OLD_KEY);
+      try {
+        expect(decrypt(old.encrypted, old.iv, old.authTag, 1)).toBe("segredo-antigo");
+        expect(encrypt("novo").version).toBe(2);
+      } finally {
+        vi.stubEnv("APP_ENCRYPTION_KEY_VERSION", "1");
+        vi.stubEnv("APP_ENCRYPTION_KEY_V1", "");
+      }
+    });
+
+    it("rejeita a chave de exemplo toda em zeros", () => {
+      vi.stubEnv("APP_ENCRYPTION_KEY", "0".repeat(64));
+      try {
+        expect(() => encrypt("x")).toThrow(/trivial/);
+      } finally {
+        vi.stubEnv("APP_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+      }
+    });
+
+    it("rejeita chave com caracteres não hexadecimais", () => {
+      vi.stubEnv("APP_ENCRYPTION_KEY", "z".repeat(64));
+      try {
+        expect(() => encrypt("x")).toThrow(/hexadecimais/);
+      } finally {
+        vi.stubEnv("APP_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+      }
+    });
+  });
+
+  describe("generateInviteToken", () => {
+    it("gera tokens URL-safe distintos com 256 bits", () => {
+      const a = generateInviteToken();
+      const b = generateInviteToken();
+      expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(a).not.toBe(b);
     });
   });
 
